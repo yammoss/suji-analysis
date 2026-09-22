@@ -11,8 +11,11 @@ CACHE = BASE / 'data' / 'booking_cache.pkl'
 BUCKETS = ['M-5+', 'M-4', 'M-3', 'M-2', 'M-1', 'M-0']
 
 def find_file() -> Path | None:
-    cands = [p for p in DATA_DIR.glob('*.xlsx') if '발매' in p.name and (not p.name.startswith('~$'))]
-    return max(cands, key=lambda p: p.stat().st_mtime) if cands else None
+    for folder in dict.fromkeys((DATA_DIR, BASE)):
+        cands = [p for p in folder.glob('*.xlsx') if '발매' in p.name and (not p.name.startswith('~$'))]
+        if cands:
+            return max(cands, key=lambda p: p.stat().st_mtime)
+    return None
 
 def _num(v) -> float:
     try:

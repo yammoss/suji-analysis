@@ -882,26 +882,35 @@ def sens_missing_note(cells) -> str:
 def write_sensitivity(path, title: str, fx_list: list, fuel_list: list, blocks, assumptions: list, base=None):
     if isinstance(blocks, dict):
         blocks = [('', blocks)]
+    blocks = [(b[0], b[1], b[2] if len(b) > 2 else '') for b in blocks]
     combos = [(fx, fu) for fx in fx_list for fu in fuel_list]
     multi = len(blocks) > 1
+    routes = list(dict.fromkeys((rt for _, _, rt in blocks)))
+    split = multi and len(routes) > 1 and all(routes)
     wide = max(len(fx_list), len(combos) if multi else 0)
     wb = Workbook()
     ws = wb.active
-    ws.title = '민감도'
-    ws.sheet_view.showGridLines = False
-    ws.column_dimensions['A'].width = 1.33
-    ws.row_dimensions[2].height = 36.75
-    t = ws.cell(2, 2, title)
-    t.font = F_TITLE
-    t.alignment = CENTER
-    ws.merge_cells(start_row=2, start_column=2, end_row=2, end_column=max(3, 2 + wide))
-    row = 4
-    _text(ws, row, 2, '■ 산출기준', F_SECT)
-    row += 1
-    for a in assumptions:
-        _text(ws, row, 2, f'     - {a}')
-        row += 1
-    row += 1
+    row = 0
+
+    def start_sheet(sheet, name, heading, cols, info):
+        nonlocal ws, row
+        ws = sheet
+        ws.title = name
+        ws.sheet_view.showGridLines = False
+        ws.column_dimensions['A'].width = 1.33
+        ws.row_dimensions[2].height = 36.75
+        t = ws.cell(2, 2, heading)
+        t.font = F_TITLE
+        t.alignment = CENTER
+        ws.merge_cells(start_row=2, start_column=2, end_row=2, end_column=max(3, 2 + cols))
+        row = 4
+        if info:
+            _text(ws, row, 2, '■ 산출기준', F_SECT)
+            row += 1
+            for a in info:
+                _text(ws, row, 2, f'     - {a}')
+                row += 1
+            row += 1
 
     def head_cell(r, c, v, fmt=None):
         x = ws.cell(r, c, v)
@@ -919,7 +928,7 @@ def write_sensitivity(path, title: str, fx_list: list, fuel_list: list, blocks, 
         for j, (fx, fu) in enumerate(combos):
             head_cell(row, 3 + j, f'{fx:,.0f}원 / {fu:,.0f}c')
         row += 1
-        for name, cells in blocks:
+        for name, cells, _ in blocks:
             ws.row_dimensions[row].height = ROW_H
             head_cell(row, 2, name)
             for j, k in enumerate(combos):
@@ -964,21 +973,40 @@ def write_sensitivity(path, title: str, fx_list: list, fuel_list: list, blocks, 
         if any((r is not None and r.operating_profit is not None for r in cells.values())):
             yield ('1왕복 영업이익 (천원)', lambda r: r.operating_profit, PL_K, '')
             yield ('1왕복 한계이익 (천원)', lambda r: r.contribution, PL_K, '')
+
+    def widths(cols, wide_b):
+        for i in range(2, 3 + cols):
+            ws.column_dimensions[L(i)].width = 16 if multi else 14
+        if wide_b:
+            ws.column_dimensions['B'].width = 20
+
+    def grids(items, heading_each):
+        nonlocal row
+        for name, cells, _ in items:
+            if heading_each:
+                _text(ws, row, 2, f'■ {name}', F_SECT)
+                row += 1
+            for label, get, fmt, note in metrics(cells):
+                grid(cells, label, get, fmt, note)
+    start_sheet(ws, '요약' if split else '민감도', title, wide, assumptions)
     if multi:
         compare('노선별 1왕복 총비용 (천원)', sens_tot, MONEY_K)
         compare('노선별 1왕복 변동비 (천원)', sens_var, MONEY_K)
-        if any((r is not None and r.operating_profit is not None for _, cs in blocks for r in cs.values())):
+        if any((r is not None and r.operating_profit is not None for _, cs, _ in blocks for r in cs.values())):
             compare('노선별 1왕복 영업이익 (천원)', lambda r: r.operating_profit, PL_K)
-    for name, cells in blocks:
-        if multi:
-            _text(ws, row, 2, f'■ {name}', F_SECT)
-            row += 1
-        for label, get, fmt, note in metrics(cells):
-            grid(cells, label, get, fmt, note)
-    for i in range(2, 3 + wide):
-        ws.column_dimensions[L(i)].width = 16 if multi else 14
-    if multi:
-        ws.column_dimensions['B'].width = 20
+    if not split:
+        grids(blocks, multi)
+        widths(wide, multi)
+    else:
+        widths(wide, True)
+        _text(ws, row, 2, '     노선별 환율 x 유가 그리드는 노선 시트에 있습니다 : ' + ' · '.join(routes), F_NOTE)
+        used = {'요약'}
+        for rt in routes:
+            items = [b for b in blocks if b[2] == rt]
+            name = _sheet_name(rt, used)
+            start_sheet(wb.create_sheet(), name, f'{rt} 환율 x 유가 민감도', len(fx_list), [])
+            grids(items, True)
+            widths(len(fx_list), True)
     path = Path(path)
     wb.save(path)
     return path

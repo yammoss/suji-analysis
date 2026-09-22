@@ -999,11 +999,11 @@ def main():
         if miss:
             a.append(f'※ {miss}')
         acs = list(dict.fromkeys((b.leg.aircraft for b in blocks)))
-        tag = _fit('+'.join((b.leg.route.replace(' V.V', '').replace('-', '') for b in blocks)) + (f' {acs[0]}' if len(acs) == 1 else ''))
+        tag = _fit('+'.join(dict.fromkeys((b.leg.route.replace(' V.V', '').replace('-', '') for b in blocks))) + (f' {acs[0]}' if len(acs) == 1 else ''))
         out = Path(args.out) if args.out else BASE / 'output' / f'민감도_{datetime.now():%y%m%d} ({tag}).xlsx'
         out.parent.mkdir(parents=True, exist_ok=True)
         base_cell = (main_eng.fx, main_eng.fuel)
-        write_sensitivity(out, f'환율 x 유가 민감도 - {tag} ({base_period.label})', fxs, fuels, [(b.label, b.cells) for b in blocks], a, base=base_cell if all((base_cell in b.cells for b in blocks)) else None)
+        write_sensitivity(out, f'환율 x 유가 민감도 - {tag} ({base_period.label})', fxs, fuels, [(b.label, b.cells, b.leg.route) for b in blocks], a, base=base_cell if all((base_cell in b.cells for b in blocks)) else None)
         eprint(f'\n[저장] {out}')
         return
     if not args.yes:
