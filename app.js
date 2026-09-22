@@ -236,8 +236,9 @@ function addCostRow(route = "", ac = "") {
   const row = document.createElement("div");
   row.className = "cost-row";
   row.innerHTML = `<label>노선 <input type="text" class="c-route" size="10" placeholder="ICNNRT"></label>
-    <label>기종 <input type="text" class="c-ac" size="16" list="ac-list" placeholder="B738, A333"></label>
+    <label>기종 <input type="text" class="c-ac" size="13" list="ac-list" placeholder="B738, A333"></label>
     <label class="opt"><input type="checkbox" class="c-all"> 보유 기종 전부</label>
+    <label>스케줄 <input type="text" class="c-sched" size="17" placeholder="(선택) 4/W D3467"></label>
     <button type="button" class="del" title="삭제">✕</button>`;
   row.querySelector(".c-route").value = route;
   row.querySelector(".c-ac").value = ac;
@@ -245,7 +246,7 @@ function addCostRow(route = "", ac = "") {
   all.onchange = () => { acIn.disabled = all.checked; };
   row.querySelector(".del").onclick = () => {
     if ($("cost-rows").children.length > 1) row.remove();
-    else { row.querySelector(".c-route").value = ""; acIn.value = ""; }
+    else { row.querySelector(".c-route").value = ""; acIn.value = ""; row.querySelector(".c-sched").value = ""; }
   };
   $("cost-rows").appendChild(row);
 }
@@ -276,10 +277,12 @@ $("run-cost").onclick = () => {
   for (const row of $("cost-rows").children) {
     const route = row.querySelector(".c-route").value.trim().toUpperCase();
     if (!route) continue;
-    if (row.querySelector(".c-all").checked) { lines.push(`${route} 기종별 비용`); continue; }
+    const sched = row.querySelector(".c-sched").value.trim();
+    const tail = (sched ? sched + " " : "") + "비용";
+    if (row.querySelector(".c-all").checked) { lines.push(`${route} 기종별 ${tail}`); continue; }
     const acs = row.querySelector(".c-ac").value.split(/[,\s/]+/).map((a) => a.trim().toUpperCase()).filter(Boolean);
     if (!acs.length) return setStatus(`${route} 의 기종을 입력하세요 (또는 '보유 기종 전부')`);
-    for (const ac of acs) lines.push(`${route} ${ac} 비용`);
+    for (const ac of acs) lines.push(`${route} ${ac} ${tail}`);
   }
   if (!lines.length) return setStatus("노선을 입력하세요");
   const fx = indexValues("fx-list"), fuel = indexValues("fuel-list");
