@@ -40,7 +40,7 @@ function setStatus(text, busy = false) {
   $("statusline").classList.toggle("busy", busy);
 }
 function setRunnable(on) {
-  for (const b of ["run-compare", "run-health", "run-breakeven"]) $(b).disabled = !on;
+  for (const b of ["run-compare", "run-breakeven"]) $(b).disabled = !on;
 }
 
 // ── 폴더 기억 (IndexedDB) ────────────────────────────────────────────
@@ -223,9 +223,13 @@ $("run-compare").onclick = async () => {
   await runTool("run.py", argv, text + "\n");
 };
 
-$("run-health").onclick = () => runTool("전노선_헬스체크.py", [
-  "--period", $("h-period").value.trim() || "W26",
-  "--fixed-alloc", document.querySelector("input[name=halloc]:checked").value]);
+document.querySelectorAll("button.ex").forEach((b) => {
+  b.onclick = () => {
+    $("input").value = b.dataset.ex;
+    $("period").value = "";
+    $("input").focus();
+  };
+});
 
 $("run-breakeven").onclick = () => {
   const route = $("b-route").value.trim(), ac = $("b-ac").value.trim();

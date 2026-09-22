@@ -51,6 +51,19 @@
         color: #fff; text-decoration: none; }
   fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
   legend { color: var(--muted); font-size: 12.5px; padding: 0 4px; }
+  .guide { background: #faf8f4; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .guide p { margin: 0 0 8px; font-size: 13px; }
+  code { font: 12.5px Consolas, "D2Coding", monospace; background: #efebe3; padding: 1px 4px; border-radius: 4px; }
+  .examples { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
+  button.ex { background: #fff; color: var(--ink); border-color: var(--line); text-align: left; padding: 7px 10px; }
+  button.ex:hover { border-color: var(--accent); }
+  button.ex b { display: block; font-size: 12.5px; color: var(--brand); }
+  button.ex span { display: block; font: 11.5px Consolas, monospace; color: var(--muted);
+                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  details { margin-top: 8px; font-size: 13px; }
+  summary { cursor: pointer; color: var(--brand); }
+  table.notation { border-collapse: collapse; margin: 6px 0; width: 100%; }
+  table.notation td { border-top: 1px solid var(--line); padding: 4px 6px; vertical-align: top; }
 </style>
 </head>
 <body>
@@ -75,18 +88,38 @@
     <h2><span class="step">2</span>분석</h2>
     <div class="tabs">
       <button data-tab="compare" class="on">수지비교</button>
-      <button data-tab="health">전 노선 헬스체크</button>
       <button data-tab="breakeven">손익분기 계산기</button>
     </div>
 
     <div class="pane" id="pane-compare">
-      <textarea id="input" placeholder="예)
-W26
-ICNDAD B738 DAILY vs 4/W D3467
-TAEBKK B738 DAILY vs ~26.12.15, 27.03.02~ 4/W D3467 + 나머지기간 DAILY"></textarea>
+      <div class="guide">
+        <p><b>작성법</b> : <code>노선 기종 스케줄 <b>vs</b> 기종 스케줄</code> &nbsp;— vs 왼쪽이 기존(안), 오른쪽이 변경(안).
+          한 줄에 한 건, 여러 줄이면 한 표에 합계까지 나옵니다. 아래 예시를 누르면 입력칸에 들어갑니다.</p>
+        <div class="examples">
+          <button type="button" class="ex" data-ex="W26&#10;ICNDAD B738 DAILY vs 4/W D3467"><b>스케줄만 비교</b><span>ICNDAD B738 DAILY vs 4/W D3467</span></button>
+          <button type="button" class="ex" data-ex="W26&#10;ICNNRT B738 vs A333 DAILY"><b>기종만 비교</b><span>ICNNRT B738 vs A333 DAILY</span></button>
+          <button type="button" class="ex" data-ex="W26&#10;ICNDAD B738 DAILY vs 12/18까지 주4회, 이후 DAILY"><b>기간 중 스케줄 변경</b><span>… vs 12/18까지 주4회, 이후 DAILY</span></button>
+          <button type="button" class="ex" data-ex="W26&#10;ICNSYD A333 DAILY + ICNNRT A339 DAILY vs ICNSYD A339 DAILY + ICNNRT A333 DAILY"><b>노선 2개 기종 맞바꿈</b><span>ICNSYD A333 DAILY + ICNNRT A339 DAILY vs …</span></button>
+          <button type="button" class="ex" data-ex="W26&#10;CJJDPS B738 2/W D47 vs 비운항"><b>노선 접기</b><span>CJJDPS B738 2/W D47 vs 비운항</span></button>
+        </div>
+        <details>
+          <summary>스케줄 표기 더 보기</summary>
+          <table class="notation">
+            <tr><td><code>DAILY</code></td><td>매일</td><td><code>DAILY x2</code></td><td>1일 2왕복</td></tr>
+            <tr><td><code>주4회</code> / <code>4/W</code></td><td>주당 4회</td><td><code>D3467</code></td><td>수·목·토·일 (1=월 … 7=일)</td></tr>
+            <tr><td><code>4/W D3467</code></td><td>횟수 + 요일 (요일 기준)</td><td><code>214</code></td><td>왕복 횟수 직접 지정</td></tr>
+            <tr><td><code>~26.12.18, 27.03.04~ 4/W + 나머지기간 DAILY</code></td><td colspan="3">앞·뒤 구간은 4/W, 가운데는 DAILY</td></tr>
+            <tr><td><code>비운항</code></td><td colspan="3">안 띄움 (0왕복) — 감편·폐지 비교</td></tr>
+          </table>
+          <p class="muted">· 기종·스케줄을 한쪽에만 적으면 반대쪽도 같은 값으로 봅니다.
+            · 여러 노선에 같은 비교 : <code>ICNCDG, ICNBCN A332 4/W vs A339 3/W</code>
+            · 노선은 <code>ICN-NRT</code> / <code>ICNNRT</code> 둘 다 됩니다.</p>
+        </details>
+      </div>
+      <textarea id="input" placeholder="여기에 입력 (위 예시를 눌러도 됩니다)&#10;&#10;W26&#10;ICNDAD B738 DAILY vs 4/W D3467"></textarea>
       <div class="row">
-        <label>기간 <input type="text" id="period" size="22" placeholder="W26 / 27.01~27.02"></label>
-        <span class="muted">입력에 적었으면 비워두세요 (자동으로 읽음)</span>
+        <label>기간 <input type="text" id="period" size="22" placeholder="W26 / S27 / 27.01~27.02"></label>
+        <span class="muted">입력 첫 줄에 W26 처럼 적었으면 비워두세요</span>
       </div>
       <fieldset>
         <legend>간접고정비 배부 기준</legend>
@@ -104,16 +137,6 @@ TAEBKK B738 DAILY vs ~26.12.15, 27.03.02~ 4/W D3467 + 나머지기간 DAILY"></t
         <label class="opt"><input type="radio" name="daily" value="daily"> 일자 매칭 (같은 요일·연휴끼리)</label>
       </fieldset>
       <button id="run-compare" disabled>계산 · 엑셀 받기</button>
-    </div>
-
-    <div class="pane" id="pane-health" hidden>
-      <p class="muted">지금 편성된 사업량 그대로 노선 x 기종 전부의 손익을 계산해 영업이익 낮은 순으로 줄 세웁니다.</p>
-      <div class="row">
-        <label>기간 <input type="text" id="h-period" size="12" value="W26"></label>
-        <label class="opt"><input type="radio" name="halloc" value="volume" checked> 편수·B/T</label>
-        <label class="opt"><input type="radio" name="halloc" value="revenue"> 운송수입</label>
-      </div>
-      <button id="run-health" disabled>계산 · 엑셀 받기</button>
     </div>
 
     <div class="pane" id="pane-breakeven" hidden>
