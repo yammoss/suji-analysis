@@ -242,6 +242,12 @@ def parse_schedule(text: str, period: Period) -> ScheduleResult | None:
         if c is None:
             return None
         clauses.append(c)
+    prev_hi = None
+    for c in clauses:
+        if c['lo'] is None and c['hi'] is not None and c['body'] and (not c['is_rest']) and (prev_hi is not None) and (prev_hi < c['hi']):
+            c['lo'] = prev_hi + timedelta(days=1)
+        if c['hi'] is not None and c['body']:
+            prev_hi = c['hi']
     merged = []
     i = 0
     while i < len(clauses):

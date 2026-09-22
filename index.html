@@ -88,6 +88,30 @@
   .tag.bad { color: var(--err); border-color: var(--err); }
   .pv-warn { margin: 8px 0 0; padding-left: 18px; color: var(--warn); font-size: 12.5px; }
   .pv-basis { margin: 4px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+  .modes { display: inline-flex; border: 1px solid var(--brand); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+  .modes button { border: 0; border-radius: 0; background: #fff; color: var(--brand); padding: 6px 16px; }
+  .modes button.on { background: var(--brand); color: #fff; }
+  .card2 { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: #fff; }
+  .card2-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .card2-head .no { font-weight: 700; color: var(--brand); margin-right: 4px; }
+  .card2-head .del { margin-left: auto; background: #fff; color: var(--muted); border-color: var(--line); padding: 3px 9px; }
+  .tbtn { background: #fff; color: var(--ink); border-color: var(--line); padding: 4px 10px; font-size: 12.5px; }
+  .tbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
+  .side { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #faf8f4; }
+  .side h4 { margin: 0 0 6px; font-size: 13px; color: var(--brand); }
+  .side .locked { color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+  .part { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin: 5px 0; }
+  .part .until { width: 62px; }
+  .part .plabel { font-size: 12px; color: var(--muted); min-width: 62px; }
+  .chip { width: 28px; height: 28px; padding: 0; font-size: 12px; background: #fff; color: var(--ink); border-color: var(--line); }
+  .chip.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .part .code { font: 12px Consolas, monospace; color: var(--brand); margin-left: 4px; }
+  .part .x { background: #fff; color: var(--muted); border-color: var(--line); padding: 1px 7px; font-size: 12px; }
+  .gen { margin-top: 10px; background: #f3efe7; border-radius: 8px; padding: 8px 12px; }
+  .gen-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  #gen { margin: 6px 0 0; font: 13px/1.5 Consolas, "D2Coding", monospace; white-space: pre-wrap; }
+  .gen-err { color: var(--err); font-size: 12.5px; }
   table.notation td { border-top: 1px solid var(--line); padding: 4px 6px; vertical-align: top; }
 </style>
 </head>
@@ -117,6 +141,24 @@
     </div>
 
     <div class="pane" id="pane-compare">
+      <div class="modes">
+        <button type="button" data-mode="form" class="on">폼 입력</button>
+        <button type="button" data-mode="text">직접 입력</button>
+      </div>
+
+      <div id="mode-form">
+        <div id="cards"></div>
+        <button type="button" class="ghost small" id="card-add">+ 비교 추가</button>
+        <span class="muted">여러 건을 넣으면 기존(안)끼리, 변경(안)끼리 묶여 한 표에 합계까지 나옵니다.</span>
+        <div class="gen">
+          <div class="gen-head"><span class="muted">만들어지는 입력 문장</span>
+            <button type="button" class="ghost small" id="to-text">직접 입력으로 옮겨서 고치기</button></div>
+          <pre id="gen"></pre>
+          <div id="gen-err" class="gen-err"></div>
+        </div>
+      </div>
+
+      <div id="mode-text" hidden>
       <div class="guide">
         <p><b>작성법</b> : <code>노선 기종 스케줄 <b>vs</b> 기종 스케줄</code> &nbsp;— vs 왼쪽이 기존(안), 오른쪽이 변경(안).
           한 줄에 한 건, 여러 줄이면 한 표에 합계까지 나옵니다. 아래 예시를 누르면 입력칸에 들어갑니다.</p>
@@ -142,9 +184,10 @@
         </details>
       </div>
       <textarea id="input" placeholder="여기에 입력 (위 예시를 눌러도 됩니다)&#10;&#10;W26&#10;ICNDAD B738 DAILY vs 4/W D3467"></textarea>
+      </div>
       <div class="row">
-        <label>기간 <input type="text" id="period" size="22" placeholder="W26 / S27 / 27.01~27.02"></label>
-        <span class="muted">입력 첫 줄에 W26 처럼 적었으면 비워두세요</span>
+        <label>기간 <input type="text" id="period" size="22" value="W26" placeholder="W26 / S27 / 27.01~27.02"></label>
+        <span class="muted" id="period-hint">W26 / S27 / 27.01~27.02 / 26.12.20~27.02.28</span>
       </div>
       <fieldset>
         <legend>간접고정비 배부 기준</legend>

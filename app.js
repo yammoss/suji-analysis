@@ -209,11 +209,19 @@ async function runTool(script, argv, inputText) {
 }
 
 async function compareArgs() {
-  const text = $("input").value.trim();
-  if (!text) { setStatus("분석할 내용을 입력하세요"); return null; }
-  let period = $("period").value.trim();
-  if (!period) period = await rpc("period", { text });
-  if (!period) { setStatus("기간을 알 수 없습니다 - 기간 칸이나 입력에 W26 / 27.01~27.02 처럼 적으세요"); return null; }
+  let text, period;
+  if (formMode()) {
+    const g = genForm();
+    if (g.errors.length) { setStatus("폼 확인 : " + g.errors[0]); return null; }
+    if (!g.lines.length) { setStatus("노선을 입력하세요"); return null; }
+    text = g.lines.join("\n");
+    period = $("period").value.trim();
+  } else {
+    text = $("input").value.trim();
+    if (!text) { setStatus("분석할 내용을 입력하세요"); return null; }
+    period = (await rpc("period", { text })) || $("period").value.trim();   // 입력에 적힌 기간이 우선
+  }
+  if (!period) { setStatus("기간을 알 수 없습니다 - 기간 칸에 W26 / 27.01~27.02 처럼 적으세요"); return null; }
   const argv = ["입력.txt", "--period", period, "--yes",
     "--fixed-alloc", document.querySelector("input[name=alloc]:checked").value];
   const planShown = !$("basis-box").hidden;
@@ -297,11 +305,229 @@ $("input").addEventListener("input", () => { $("preview").innerHTML = ""; });
 document.querySelectorAll("button.ex").forEach((b) => {
   b.onclick = () => {
     $("input").value = b.dataset.ex;
-    $("period").value = "";
     $("preview").innerHTML = "";
     $("input").focus();
   };
 });
+
+// ── 수지비교 폼 입력 ──────────────────────────────────────────────────
+// 폼은 입력 문장을 만들어 줄 뿐이고, 계산은 그 문장을 기존 파서가 그대로 읽는다.
+const TYPES = [
+  ["ac", "기종 변경"], ["sc", "스케줄 변경"], ["both", "기종 + 스케줄"],
+  ["swap", "노선 간 기종 맞바꿈"], ["cut", "감편 · 운휴"],
+];
+const DAYS = ["월", "화", "수", "목", "금", "토", "일"];
+const formMode = () => !$("mode-form").hidden;
+
+const newPart = () => ({ until: "", days: [1, 1, 1, 1, 1, 1, 1], x2: false });
+const newSide = () => ({ ac: "", parts: [newPart()] });
+let cards = [];
+
+function partCode(p) {
+  const on = p.days.map((v, i) => (v ? i + 1 : "")).join("");
+  if (on.length === 7) return p.x2 ? "DAILY x2" : "DAILY";
+  if (!on.length) return "비운항";
+  return `${on.length}/W D${on}`;
+}
+function schedText(side) {
+  const ps = side.parts;
+  if (ps.length === 1) return partCode(ps[0]);
+  const head = ps.slice(0, -1).map((p) => `${p.until.trim()}까지 ${partCode(p)}`);
+  return head.join(", ") + ", 이후 " + partCode(ps[ps.length - 1]);
+}
+
+function genForm() {
+  const lines = [], errors = [];
+  cards.forEach((c, i) => {
+    const n = i + 1, r = c.route.trim().toUpperCase().replace(/\s+/g, ""), r2 = c.route2.trim().toUpperCase().replace(/\s+/g, "");
+    const A = c.a.ac.trim().toUpperCase(), B = c.b.ac.trim().toUpperCase();
+    if (!r && !A && !B) return;                                   // 빈 카드는 건너뜀
+    if (!r) errors.push(`비교 ${n} : 노선을 입력하세요`);
+    if (!A) errors.push(`비교 ${n} : ${c.type === "swap" ? "노선 A" : "기존(안)"} 기종을 입력하세요`);
+    if ((c.type === "ac" || c.type === "both" || c.type === "swap") && !B)
+      errors.push(`비교 ${n} : ${c.type === "swap" ? "노선 B" : "변경(안)"} 기종을 입력하세요`);
+    if (c.type === "swap" && !r2) errors.push(`비교 ${n} : 노선 B 를 입력하세요`);
+    for (const [label, side] of [["기존(안)", c.a], ["변경(안)", c.b]])
+      side.parts.slice(0, -1).forEach((p) => {
+        if (!/^\d{1,2}[./]\d{1,2}$/.test(p.until.trim())) errors.push(`비교 ${n} ${label} : 구간 끝 날짜를 12/18 처럼 적으세요`);
+      });
+    const sa = schedText(c.a), sb = schedText(c.b);
+    if (c.type === "ac") lines.push(`${r} ${A} ${sa} vs ${B} ${sa}`);
+    else if (c.type === "sc") lines.push(`${r} ${A} ${sa} vs ${A} ${sb}`);
+    else if (c.type === "both") lines.push(`${r} ${A} ${sa} vs ${B} ${sb}`);
+    else if (c.type === "cut") lines.push(`${r} ${A} ${sa} vs 비운항`);
+    else lines.push(`${r} ${A} ${sa} + ${r2} ${B} ${sb} vs ${r} ${B} ${sa} + ${r2} ${A} ${sb}`);
+  });
+  return { lines, errors };
+}
+
+function renderGen() {
+  const g = genForm();
+  $("gen").textContent = g.lines.length ? g.lines.join("\n") : "(노선·기종을 넣으면 여기에 문장이 만들어집니다)";
+  $("gen-err").textContent = g.errors.join(" · ");
+  $("preview").innerHTML = "";
+}
+
+function partRow(side, idx, last, onChange) {
+  const p = side.parts[idx];
+  const row = document.createElement("div");
+  row.className = "part";
+  if (!last) {
+    row.innerHTML = `<span class="plabel">~ <input type="text" class="until" placeholder="12/18"> 까지</span>`;
+    const u = row.querySelector(".until");
+    u.value = p.until;
+    u.oninput = () => { p.until = u.value; renderGen(); };
+  } else {
+    row.innerHTML = `<span class="plabel">${side.parts.length > 1 ? "이후" : "전체 기간"}</span>`;
+  }
+  DAYS.forEach((d, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (p.days[i] ? " on" : "");
+    b.textContent = d;
+    b.onclick = () => { p.days[i] = p.days[i] ? 0 : 1; onChange(); };
+    row.appendChild(b);
+  });
+  if (p.days.every(Boolean)) {
+    const l = document.createElement("label");
+    l.className = "opt";
+    l.innerHTML = `<input type="checkbox"> x2`;
+    l.querySelector("input").checked = p.x2;
+    l.querySelector("input").onchange = (e) => { p.x2 = e.target.checked; onChange(); };
+    row.appendChild(l);
+  }
+  const code = document.createElement("span");
+  code.className = "code";
+  code.textContent = partCode(p);
+  row.appendChild(code);
+  if (!last) {
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "x";
+    x.textContent = "✕";
+    x.title = "이 구간 삭제";
+    x.onclick = () => { side.parts.splice(idx, 1); onChange(); };
+    row.appendChild(x);
+  }
+  return row;
+}
+
+function sideBox(c, key, title, opts) {
+  const side = c[key];
+  const box = document.createElement("div");
+  box.className = "side";
+  box.innerHTML = `<h4>${title}</h4>`;
+  const redraw = () => renderCards();
+  if (opts.acLocked) {
+    box.insertAdjacentHTML("beforeend", `<div class="locked">기종 : 기존(안)과 같음 (${esc(c.a.ac || "-")})</div>`);
+  } else {
+    const l = document.createElement("label");
+    l.innerHTML = `기종 <input type="text" size="10" list="ac-list" placeholder="B738">`;
+    const inp = l.querySelector("input");
+    inp.value = side.ac;
+    inp.oninput = () => { side.ac = inp.value; if (key === "a") syncLocked(box.parentElement, c); renderGen(); };
+    box.appendChild(l);
+  }
+  if (opts.cut) {
+    box.insertAdjacentHTML("beforeend", `<div class="locked">스케줄 : 비운항 (0왕복)</div>`);
+  } else if (opts.schedLocked) {
+    box.insertAdjacentHTML("beforeend", `<div class="locked">스케줄 : 기존(안)과 같음 (${esc(schedText(c.a))})</div>`);
+  } else {
+    side.parts.forEach((_, i) => box.appendChild(partRow(side, i, i === side.parts.length - 1, redraw)));
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "ghost small";
+    add.textContent = "+ 구간 나누기";
+    add.title = "기간 중간에 스케줄이 바뀔 때 (예: 12/18까지 주4회, 이후 DAILY)";
+    add.onclick = () => { side.parts.splice(side.parts.length - 1, 0, newPart()); redraw(); };
+    box.appendChild(add);
+  }
+  return box;
+}
+
+function syncLocked(sidesEl, c) {       // 기존(안) 기종을 칠 때 '같음' 표시만 갱신 (입력칸 포커스 유지)
+  sidesEl.querySelectorAll(".locked").forEach((el) => {
+    if (el.textContent.startsWith("기종")) el.textContent = `기종 : 기존(안)과 같음 (${c.a.ac || "-"})`;
+  });
+}
+
+function renderCards() {
+  const wrap = $("cards");
+  wrap.innerHTML = "";
+  cards.forEach((c, i) => {
+    const el = document.createElement("div");
+    el.className = "card2";
+    const head = document.createElement("div");
+    head.className = "card2-head";
+    head.innerHTML = `<span class="no">비교 ${i + 1}</span>`;
+    for (const [t, label] of TYPES) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tbtn" + (c.type === t ? " on" : "");
+      b.textContent = label;
+      b.onclick = () => { c.type = t; renderCards(); };
+      head.appendChild(b);
+    }
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "del";
+    del.textContent = "✕";
+    del.title = "이 비교 삭제";
+    del.onclick = () => { cards.splice(i, 1); if (!cards.length) cards.push(newCard()); renderCards(); };
+    head.appendChild(del);
+    el.appendChild(head);
+
+    const rrow = document.createElement("div");
+    rrow.className = "row";
+    rrow.innerHTML = `<label>${c.type === "swap" ? "노선 A" : "노선"} <input type="text" class="r1" size="10" placeholder="ICNDAD"></label>`
+      + (c.type === "swap" ? `<label>노선 B <input type="text" class="r2" size="10" placeholder="ICNNRT"></label>` : "");
+    const r1 = rrow.querySelector(".r1");
+    r1.value = c.route;
+    r1.oninput = () => { c.route = r1.value; renderGen(); };
+    const r2 = rrow.querySelector(".r2");
+    if (r2) { r2.value = c.route2; r2.oninput = () => { c.route2 = r2.value; renderGen(); }; }
+    el.appendChild(rrow);
+
+    const sides = document.createElement("div");
+    sides.className = "sides";
+    if (c.type === "swap") {
+      sides.appendChild(sideBox(c, "a", "노선 A (지금 기종 · 스케줄)", {}));
+      sides.appendChild(sideBox(c, "b", "노선 B (지금 기종 · 스케줄)", {}));
+    } else {
+      sides.appendChild(sideBox(c, "a", "기존(안)", {}));
+      sides.appendChild(sideBox(c, "b", "변경(안)", {
+        acLocked: c.type === "sc" || c.type === "cut",
+        schedLocked: c.type === "ac",
+        cut: c.type === "cut",
+      }));
+    }
+    el.appendChild(sides);
+    if (c.type === "swap")
+      el.insertAdjacentHTML("beforeend", `<p class="muted">변경(안)은 두 노선의 기종을 서로 바꾸고, 스케줄은 각 노선 그대로 둡니다.</p>`);
+    wrap.appendChild(el);
+  });
+  renderGen();
+}
+const newCard = () => ({ type: "ac", route: "", route2: "", a: newSide(), b: newSide() });
+
+$("card-add").onclick = () => { cards.push(newCard()); renderCards(); };
+$("to-text").onclick = () => {
+  const g = genForm();
+  const per = $("period").value.trim();
+  $("input").value = (per ? per + "\n" : "") + g.lines.join("\n");
+  setMode("text");
+};
+function setMode(m) {
+  document.querySelectorAll(".modes button").forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
+  $("mode-form").hidden = m !== "form";
+  $("mode-text").hidden = m !== "text";
+  $("period-hint").textContent = m === "form" ? "W26 / S27 / 27.01~27.02 / 26.12.20~27.02.28"
+    : "입력에 W26 처럼 기간을 적었으면 그게 우선합니다";
+  $("preview").innerHTML = "";
+}
+document.querySelectorAll(".modes button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+cards.push(newCard());
+renderCards();
 
 // ── 비용 탭 ───────────────────────────────────────────────────────────
 function addCostRow(route = "", ac = "") {
