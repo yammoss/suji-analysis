@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>노선-기종 수지분석</title>
+<style>
+  :root {
+    --ink: #2b2925; --muted: #6f6a62; --line: #d9d4cc; --bg: #f6f4f0; --card: #fff;
+    --brand: #666058; --accent: #c4b796; --ok: #2f7d4f; --warn: #a15c00; --err: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.55 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+  header { background: var(--brand); color: #fff; padding: 18px 24px; }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: -.3px; }
+  header p { margin: 4px 0 0; color: #e7e2d8; font-size: 13px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 16px 18px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 15px; display: flex; gap: 8px; align-items: center; }
+  .step { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+          background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; }
+  button { font: inherit; border: 1px solid var(--brand); background: var(--brand); color: #fff;
+           padding: 8px 14px; border-radius: 7px; cursor: pointer; }
+  button.ghost { background: #fff; color: var(--brand); }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin: 8px 0; }
+  label.opt { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  input[type=text] { font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+                     min-width: 0; }
+  textarea { width: 100%; min-height: 150px; font: 13px/1.5 Consolas, "D2Coding", monospace;
+             padding: 10px; border: 1px solid var(--line); border-radius: 7px; resize: vertical; }
+  .files { margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; }
+  .files li { padding: 2px 0; }
+  .files .ok::before { content: "✔ "; color: var(--ok); }
+  .files .miss::before { content: "✖ "; color: var(--err); }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tabs button { background: #fff; color: var(--brand); }
+  .tabs button.on { background: var(--brand); color: #fff; }
+  .pane[hidden] { display: none; }
+  #log { background: #1f1e1c; color: #e8e4dc; font: 12.5px/1.5 Consolas, "D2Coding", monospace;
+         padding: 12px; border-radius: 8px; height: 320px; overflow: auto; white-space: pre-wrap; margin: 0; }
+  #statusline { font-size: 13px; }
+  #statusline.busy::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+    border: 2px solid var(--accent); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .dl { display: inline-block; margin-top: 8px; padding: 8px 14px; border-radius: 7px; background: var(--ok);
+        color: #fff; text-decoration: none; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+  legend { color: var(--muted); font-size: 12.5px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>노선-기종 수지분석</h1>
+  <p>계산은 이 PC의 브라우저 안에서만 합니다. 원가·실적 데이터는 팀 공유폴더에서 읽고 인터넷으로 보내지 않습니다.</p>
+</header>
+<main>
+  <section class="card">
+    <h2><span class="step">1</span>데이터 폴더</h2>
+    <div class="row">
+      <button id="pick">공유폴더 선택</button>
+      <button id="regrant" class="ghost" hidden>연결했던 폴더 다시 허용</button>
+      <span id="foldername" class="muted"></span>
+    </div>
+    <ul id="files" class="files"></ul>
+    <p class="muted">비용 추정용 파일 · 과거실적 DATA.xlsx · 공휴일 DATA.xlsx 가 들어 있는 폴더를 고르세요.
+      처음 한 번만 고르면 다음부터는 기억합니다 (엣지·크롬).</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">2</span>분석</h2>
+    <div class="tabs">
+      <button data-tab="compare" class="on">수지비교</button>
+      <button data-tab="health">전 노선 헬스체크</button>
+      <button data-tab="breakeven">손익분기 계산기</button>
+    </div>
+
+    <div class="pane" id="pane-compare">
+      <textarea id="input" placeholder="예)
+W26
+ICNDAD B738 DAILY vs 4/W D3467
+TAEBKK B738 DAILY vs ~26.12.15, 27.03.02~ 4/W D3467 + 나머지기간 DAILY"></textarea>
+      <div class="row">
+        <label>기간 <input type="text" id="period" size="22" placeholder="W26 / 27.01~27.02"></label>
+        <span class="muted">입력에 적었으면 비워두세요 (자동으로 읽음)</span>
+      </div>
+      <fieldset>
+        <legend>간접고정비 배부 기준</legend>
+        <label class="opt"><input type="radio" name="alloc" value="volume" checked> 편수·B/T 기준 (권장)</label>
+        <label class="opt"><input type="radio" name="alloc" value="revenue"> 운송수입 기준 (원본 비용파일 방식)</label>
+      </fieldset>
+      <fieldset id="basis-box" hidden>
+        <legend>L/F·A/R 기준</legend>
+        <label class="opt"><input type="radio" name="basis" value="past"> 과거실적</label>
+        <label class="opt"><input type="radio" name="basis" value="plan" checked> 사업계획 (<span id="plantabs"></span>)</label>
+      </fieldset>
+      <fieldset id="daily-box" hidden>
+        <legend>과거실적 가져오는 방식</legend>
+        <label class="opt"><input type="radio" name="daily" value="month" checked> 월 단위</label>
+        <label class="opt"><input type="radio" name="daily" value="daily"> 일자 매칭 (같은 요일·연휴끼리)</label>
+      </fieldset>
+      <button id="run-compare" disabled>계산 · 엑셀 받기</button>
+    </div>
+
+    <div class="pane" id="pane-health" hidden>
+      <p class="muted">지금 편성된 사업량 그대로 노선 x 기종 전부의 손익을 계산해 영업이익 낮은 순으로 줄 세웁니다.</p>
+      <div class="row">
+        <label>기간 <input type="text" id="h-period" size="12" value="W26"></label>
+        <label class="opt"><input type="radio" name="halloc" value="volume" checked> 편수·B/T</label>
+        <label class="opt"><input type="radio" name="halloc" value="revenue"> 운송수입</label>
+      </div>
+      <button id="run-health" disabled>계산 · 엑셀 받기</button>
+    </div>
+
+    <div class="pane" id="pane-breakeven" hidden>
+      <p class="muted">이 노선·기종을 계속 띄우려면 최소 탑승률/운임이 얼마여야 하는지 역산합니다. 결과는 아래 기록 창에 나옵니다.</p>
+      <div class="row">
+        <label>노선 <input type="text" id="b-route" size="10" placeholder="ICNDAD"></label>
+        <label>기종 <input type="text" id="b-ac" size="8" placeholder="B738"></label>
+        <label>기간 <input type="text" id="b-period" size="10" value="W26"></label>
+      </div>
+      <div class="row">
+        <label>A/R 고정 <input type="text" id="b-ar" size="10" placeholder="(선택) 150000"></label>
+        <label>L/F 고정(%) <input type="text" id="b-lf" size="6" placeholder="(선택) 85"></label>
+        <label class="opt"><input type="radio" name="balloc" value="volume" checked> 편수·B/T</label>
+        <label class="opt"><input type="radio" name="balloc" value="revenue"> 운송수입</label>
+      </div>
+      <button id="run-breakeven" disabled>계산</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">3</span>진행 · 결과</h2>
+    <div id="statusline" class="busy">계산 환경 불러오는 중...</div>
+    <div id="download"></div>
+    <pre id="log"></pre>
+  </section>
+  <p class="muted">지원 브라우저 : 엣지 · 크롬. 사용법은 도구 폴더의 사용법.txt 와 같습니다.</p>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
