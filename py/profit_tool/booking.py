@@ -5,12 +5,13 @@ import pickle
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from .paths import DATA_DIR
 BASE = Path(__file__).resolve().parent.parent
 CACHE = BASE / 'data' / 'booking_cache.pkl'
 BUCKETS = ['M-5+', 'M-4', 'M-3', 'M-2', 'M-1', 'M-0']
 
 def find_file() -> Path | None:
-    cands = [p for p in BASE.glob('*.xlsx') if '발매' in p.name and (not p.name.startswith('~$'))]
+    cands = [p for p in DATA_DIR.glob('*.xlsx') if '발매' in p.name and (not p.name.startswith('~$'))]
     return max(cands, key=lambda p: p.stat().st_mtime) if cands else None
 
 def _num(v) -> float:

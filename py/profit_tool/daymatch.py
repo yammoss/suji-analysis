@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
-DEFAULT_CALENDAR = BASE / '공휴일 DATA.xlsx'
+from .paths import DATA_DIR
+DEFAULT_CALENDAR = DATA_DIR / '공휴일 DATA.xlsx'
 DAY_NAMES = '월화수목금토일'
 BIG = ('설날', '추석')
 WINDOW = 2

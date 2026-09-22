@@ -7,8 +7,10 @@ from datetime import datetime
 from pathlib import Path
 import openpyxl
 from openpyxl.utils import column_index_from_string as ci
+from profit_tool.paths import DATA_DIR
 BASE = Path(__file__).resolve().parent
 OUT = BASE / 'data' / 'w26_dataset.json'
+SOURCE = OUT.with_name('w26_dataset.source.txt')
 REQUIRED_SHEETS = ['기준데이터', '기종별 노선별 CASK', '사업량', '수입', '부대수입']
 ALLOC_SUFFIX, DIRECT_SUFFIX = ('배부비', '노선별 직접비')
 ALLOC_SHEET = DIRECT_SHEET = ''
@@ -32,6 +34,24 @@ def list_cost_files(folder: Path) -> list:
 def find_cost_file(folder: Path) -> Path | None:
     cands = list_cost_files(folder)
     return cands[0] if cands else None
+
+def source_sig(xlsx: Path) -> str:
+    st = xlsx.stat()
+    return f'{xlsx.resolve()}|{st.st_size}|{int(st.st_mtime)}'
+
+def dataset_outdated() -> str:
+    if not OUT.exists():
+        return '추출 데이터가 없습니다'
+    xlsx = find_cost_file(DATA_DIR)
+    if xlsx is None:
+        return ''
+    try:
+        made_from = SOURCE.read_text(encoding='utf-8').strip()
+    except OSError:
+        made_from = ''
+    if made_from != source_sig(xlsx):
+        return f'비용파일이 바뀌었습니다 ({xlsx.name})'
+    return ''
 
 def detect_months(wb) -> list[str]:
     plan = wb['사업량']
@@ -353,11 +373,11 @@ def main():
         if not xlsx.exists():
             sys.exit(f'[ERROR] 파일을 찾을 수 없습니다: {xlsx}')
     else:
-        xlsx = find_cost_file(BASE)
+        xlsx = find_cost_file(DATA_DIR)
         if xlsx is None:
-            sys.exit(f'[ERROR] 비용추정용 엑셀을 찾지 못했습니다.\n   {BASE} 안에 두거나, python build_dataset.py <파일경로> 로 지정하세요.')
+            sys.exit(f'[ERROR] 비용추정용 엑셀을 찾지 못했습니다.\n   {DATA_DIR} 안에 두거나, python build_dataset.py <파일경로> 로 지정하세요.')
     print(f'[원본] {xlsx.name}')
-    others = [f for f in list_cost_files(BASE) if f != xlsx]
+    others = [f for f in list_cost_files(DATA_DIR) if f != xlsx]
     if others:
         print('  [주의] 비용파일 후보가 여러 개입니다. 가장 최근 수정본을 골랐습니다.')
         for f in others:
@@ -370,6 +390,7 @@ def main():
     print(f"     시즌 월 : {', '.join(data['meta']['months'])}")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
+    SOURCE.write_text(source_sig(xlsx), encoding='utf-8')
     print(f'[OK] {OUT}')
     print(f"     기종 {len(data['aircraft'])}종 / 노선 {len(data['routes'])}개 / CASK {len(data['cask'])}조합")
     rows = data['alloc_rows']

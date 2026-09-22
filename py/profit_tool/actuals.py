@@ -7,7 +7,8 @@ from pathlib import Path
 import openpyxl
 from .period import Period
 BASE = Path(__file__).resolve().parent.parent
-DEFAULT_ACTUALS = BASE / '과거실적 DATA.xlsx'
+from .paths import DATA_DIR
+DEFAULT_ACTUALS = DATA_DIR / '과거실적 DATA.xlsx'
 C_YM, C_ROUTE, C_AC, C_FC, C_SEATS, C_PAX, C_PAXREV, C_CARGO = (1, 3, 4, 5, 6, 7, 11, 13)
 HEADER_ALIASES = {'ym': ('년월', '연월', '년/월', '기준월', '해당월', 'ym', '년도월'), 'day': ('출발일', '출발일자', '운항일', '운항일자', '일자', 'date'), 'route': ('노선', '구간', 'route'), 'dow': ('요일', 'dow', 'weekday'), 'ac': ('a/c(소)', 'a/c', 'ac', '기종', '기종(소)', 'aircraft'), 'fc': ('운항편수', '편수', '운항', 'fc', 'seg'), 'seats': ('공급좌석', '공급석', '좌석', 'ask좌석', '공급'), 'pax': ('수송석', '수송객', '탑승객', '여객수', 'pax'), 'rev': ('운송수입', '여객수입', '수입', '매출'), 'cargo': ('화물수입', '화물'), 'lf': ('l/f', 'lf', '탑승률', '탑승율'), 'ar': ('a/r', 'ar', '운임', '단가')}
 PLAN_HINTS = ('추정', '계획', '목표', '예상', '전망', 'plan', 'forecast', 'budget')
