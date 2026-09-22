@@ -67,6 +67,10 @@ onmessage = async (ev) => {
     } else if (cmd === "period") {
       py.globals.set("_txt", args.text);
       result = await call("web_entry.detect_period(_txt)");
+    } else if (cmd === "preview") {
+      py.globals.set("_argv", py.toPy(args.argv));
+      const txt = await call("web_entry.preview(_argv)");
+      result = txt ? JSON.parse(txt) : null;
     } else if (cmd === "run") {
       py.globals.set("_argv", py.toPy(args.argv));
       const out = await call(`web_entry.run_script(${JSON.stringify(args.script)}, _argv)`);

@@ -112,6 +112,15 @@ def run_script(script: str, argv: list) -> str:
     return str(max(new, key=lambda p: p.stat().st_mtime)) if new else ""
 
 
+def preview(argv: list) -> str:
+    """계산 없이 인식 결과만 (JSON 문자열, 실패하면 '')."""
+    out = APP / "data" / "preview.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.unlink(missing_ok=True)
+    run_script("run.py", list(argv) + ["--preview", str(out)])
+    return out.read_text(encoding="utf-8") if out.exists() else ""
+
+
 def detect_period(text: str) -> str:
     from profit_tool.parser import pop_period
     try:

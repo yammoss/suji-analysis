@@ -40,7 +40,7 @@ function setStatus(text, busy = false) {
   $("statusline").classList.toggle("busy", busy);
 }
 function setRunnable(on) {
-  for (const b of ["run-compare", "run-cost"]) $(b).disabled = !on;
+  for (const b of ["run-compare", "preview-compare", "run-cost"]) $(b).disabled = !on;
 }
 
 // ── 폴더 기억 (IndexedDB) ────────────────────────────────────────────
@@ -208,25 +208,97 @@ async function runTool(script, argv, inputText) {
   }
 }
 
-$("run-compare").onclick = async () => {
+async function compareArgs() {
   const text = $("input").value.trim();
-  if (!text) return setStatus("분석할 내용을 입력하세요");
+  if (!text) { setStatus("분석할 내용을 입력하세요"); return null; }
   let period = $("period").value.trim();
   if (!period) period = await rpc("period", { text });
-  if (!period) return setStatus("기간을 알 수 없습니다 - 기간 칸이나 입력에 W26 / 27.01~27.02 처럼 적으세요");
+  if (!period) { setStatus("기간을 알 수 없습니다 - 기간 칸이나 입력에 W26 / 27.01~27.02 처럼 적으세요"); return null; }
   const argv = ["입력.txt", "--period", period, "--yes",
     "--fixed-alloc", document.querySelector("input[name=alloc]:checked").value];
   const planShown = !$("basis-box").hidden;
   const past = !planShown || document.querySelector("input[name=basis]:checked").value === "past";
   if (planShown && past) argv.push("--no-plan");
   if (!$("daily-box").hidden && document.querySelector("input[name=daily]:checked").value === "daily") argv.push("--daily-match");
-  await runTool("run.py", argv, text + "\n");
+  return { argv, text: text + "\n" };
+}
+
+$("run-compare").onclick = async () => {
+  const a = await compareArgs();
+  if (a) await runTool("run.py", a.argv, a.text);
 };
+
+// ── 인식 결과 미리보기 (계산 전 확인) ─────────────────────────────────
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const CASK_MARK = { EXACT: ["OK", "ok"], SIBLING_PROXY: ["대체", "warn"], BT_PROXY: ["대체", "warn"],
+  TYPE_PROXY: ["대체", "warn"], NONE: ["없음", "bad"] };
+
+function renderPreview(d) {
+  const box = $("preview");
+  if (!d) {
+    box.innerHTML = `<div class="pv-head bad">입력을 읽지 못했습니다 - 아래 기록 창의 메시지를 확인하세요</div>`;
+    return;
+  }
+  const cask = new Map(d.cask.map((c) => [c.route + "|" + c.aircraft, c]));
+  let bad = 0;
+  const rows = d.rows.map((r) => {
+    const issues = [];
+    if (!r.route) issues.push(`노선 인식 실패 (${esc(r.route_raw || "?")})`);
+    if (!r.aircraft) issues.push("기종 없음");
+    if (r.rt_failed) issues.push("스케줄 인식 실패");
+    const c = cask.get(r.route + "|" + r.aircraft);
+    const [mark, cls] = c ? CASK_MARK[c.level] || [c.level, ""] : ["-", ""];
+    if (c && c.level === "NONE") issues.push("원가 없음");
+    if (issues.length) bad++;
+    return `<tr class="${issues.length ? "err" : ""}">
+      <td>${r.no}</td><td>${esc(r.side)}</td><td>${esc(r.route || r.route_raw)}</td><td>${esc(r.aircraft || "-")}</td>
+      <td>${esc(r.period)}</td>
+      <td class="num">${r.rt.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}<div class="sub">${esc(r.rt_src)}</div></td>
+      <td class="num">${r.lf == null ? "-" : (r.lf * 100).toFixed(1) + "%"}</td>
+      <td class="num">${r.ar == null ? "-" : Math.round(r.ar).toLocaleString("ko-KR")}</td>
+      <td><span class="tag ${cls}" title="${esc(c && c.note)}">${mark}</span></td>
+      <td class="issue">${issues.join("<br>")}</td></tr>`;
+  }).join("");
+  const warn = d.problems.length;
+  const head = bad ? `<div class="pv-head bad">인식 못 한 항목 ${bad}건 - 빨간 줄을 고친 뒤 다시 확인하세요</div>`
+    : warn ? `<div class="pv-head warn">인식은 정상 · 참고사항 ${warn}건 (아래) - 확인 후 계산하세요</div>`
+    : `<div class="pv-head ok">모두 정상 인식 - 계산해도 됩니다</div>`;
+  box.innerHTML = `${head}
+    <div class="pv-meta">기간 ${esc(d.period)}${d.grid ? " · 환율 x 유가 민감도 모드" : ""}</div>
+    <div class="pv-scroll"><table class="pv">
+      <tr><th>#</th><th>구분</th><th>노선</th><th>기종</th><th>기간</th><th>왕복</th><th>L/F</th><th>A/R</th><th>원가</th><th></th></tr>
+      ${rows}</table></div>
+    ${warn ? `<ul class="pv-warn">${d.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+    ${d.basis.length ? `<details><summary>L/F · A/R · 화물 근거</summary><ul class="pv-basis">${d.basis.map((b) => `<li>${esc(b)}</li>`).join("")}</ul></details>` : ""}`;
+}
+
+$("preview-compare").onclick = async () => {
+  const a = await compareArgs();
+  if (!a) return;
+  setRunnable(false);
+  $("log").textContent = "";
+  $("preview").innerHTML = "";
+  try {
+    await syncFiles();
+    const buf = new TextEncoder().encode(a.text).buffer;
+    await rpc("files", { files: [{ name: "입력.txt", lastModified: Date.now(), buffer: buf }] }, [buf]);
+    setStatus("입력 확인 중...", true);
+    renderPreview(await rpc("preview", { argv: a.argv }));
+    setStatus("인식 결과를 확인하세요");
+  } catch (e) {
+    setStatus("오류 : " + e.message);
+    appendLog("\n[오류] " + e.message);
+  } finally {
+    setRunnable(true);
+  }
+};
+$("input").addEventListener("input", () => { $("preview").innerHTML = ""; });
 
 document.querySelectorAll("button.ex").forEach((b) => {
   b.onclick = () => {
     $("input").value = b.dataset.ex;
     $("period").value = "";
+    $("preview").innerHTML = "";
     $("input").focus();
   };
 });

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 import argparse
+import json
 import re
 import sys
 for _s in (sys.stdout, sys.stderr):
@@ -394,6 +395,20 @@ def show_confirmation(ds: Dataset, entries: list[Entry]):
         c = ds.lookup_cask(e.aircraft, e.route)
         mark = {'EXACT': 'OK  ', 'SIBLING_PROXY': '대체', 'BT_PROXY': '대체', 'TYPE_PROXY': '대체', 'NONE': '없음'}[c.level]
         eprint(f'   [{mark}] {e.route:<16} {e.aircraft:<6}' + (f' - {c.note}' if c.note else ''))
+
+def write_preview(path, ds: Dataset, entries: list[Entry], basis_lines, problems: list, period_label: str, grid: bool):
+    rows = []
+    for e in entries:
+        p = e.parsed
+        rows.append(dict(no=e.no, side='기존(안)' if e.scenario == 'before' else '변경(안)', flight=p.flight_no or '', route=e.route or '', route_raw=p.route_raw or '', aircraft=e.aircraft or '', period=e.period.label, rt=e.rt, rt_src=e.rt_src, rt_failed=e.rt_failed, lf=p.lf, ar=p.ar))
+    cask, seen = ([], set())
+    for e in entries:
+        if not e.route or not e.aircraft or (e.route, e.aircraft) in seen:
+            continue
+        seen.add((e.route, e.aircraft))
+        c = ds.lookup_cask(e.aircraft, e.route)
+        cask.append(dict(route=e.route, aircraft=e.aircraft, level=c.level, note=c.note or ''))
+    Path(path).write_text(json.dumps(dict(period=period_label, grid=grid, rows=rows, cask=cask, basis=[str(x) for x in basis_lines or []], problems=problems), ensure_ascii=False), encoding='utf-8')
 
 def build_scenarios(ds: Dataset, entries: list[Entry], engines: dict, by_aircraft: bool=False):
     out = []
@@ -865,6 +880,7 @@ def main():
     ap.add_argument('--monthly', action='store_true', help="기간을 달 단위로 나눠 계산 (입력에 '월별' 이라고 써도 됨)")
     ap.add_argument('--out', default=None)
     ap.add_argument('--yes', action='store_true', help='확인 단계 생략')
+    ap.add_argument('--preview', default=None, metavar='JSON', help='인식 결과만 이 파일(JSON)에 저장하고 계산하지 않음 (웹 미리보기용)')
     ap.add_argument('--check', nargs=2, metavar=('기종', '노선'), help='CASK 보유 확인만')
     args = ap.parse_args()
     ds = Dataset()
@@ -982,6 +998,9 @@ def main():
         eprint('\n■ 확인 필요')
         for p in dict.fromkeys(problems):
             eprint(f'   ! {p}')
+    if args.preview:
+        write_preview(args.preview, ds, entries, basis_lines, list(dict.fromkeys(problems)), base_period.label, bool(fx_list or fuel_list))
+        return
     if fx_list or fuel_list:
         blocks, fxs, fuels = run_sensitivity(ds, entries, fx_list, fuel_list, e_period(entries, base_period), args, main_eng.fx, main_eng.fuel)
         print_sensitivity(blocks, fxs, fuels)
