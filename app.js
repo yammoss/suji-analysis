@@ -40,7 +40,7 @@ function setStatus(text, busy = false) {
   $("statusline").classList.toggle("busy", busy);
 }
 function setRunnable(on) {
-  for (const b of ["run-compare", "run-breakeven"]) $(b).disabled = !on;
+  for (const b of ["run-compare", "run-cost"]) $(b).disabled = !on;
 }
 
 // ── 폴더 기억 (IndexedDB) ────────────────────────────────────────────
@@ -231,14 +231,63 @@ document.querySelectorAll("button.ex").forEach((b) => {
   };
 });
 
-$("run-breakeven").onclick = () => {
-  const route = $("b-route").value.trim(), ac = $("b-ac").value.trim();
-  if (!route || !ac) return setStatus("노선과 기종을 입력하세요");
-  const argv = [route, ac, "--period", $("b-period").value.trim() || "W26",
-    "--fixed-alloc", document.querySelector("input[name=balloc]:checked").value];
-  if ($("b-ar").value.trim()) argv.push("--ar", $("b-ar").value.trim().replace(/,/g, ""));
-  if ($("b-lf").value.trim()) argv.push("--lf", $("b-lf").value.trim().replace("%", ""));
-  runTool("손익분기_계산기.py", argv);
+// ── 비용 탭 ───────────────────────────────────────────────────────────
+function addCostRow(route = "", ac = "") {
+  const row = document.createElement("div");
+  row.className = "cost-row";
+  row.innerHTML = `<label>노선 <input type="text" class="c-route" size="10" placeholder="ICNNRT"></label>
+    <label>기종 <input type="text" class="c-ac" size="16" list="ac-list" placeholder="B738, A333"></label>
+    <label class="opt"><input type="checkbox" class="c-all"> 보유 기종 전부</label>
+    <button type="button" class="del" title="삭제">✕</button>`;
+  row.querySelector(".c-route").value = route;
+  row.querySelector(".c-ac").value = ac;
+  const all = row.querySelector(".c-all"), acIn = row.querySelector(".c-ac");
+  all.onchange = () => { acIn.disabled = all.checked; };
+  row.querySelector(".del").onclick = () => {
+    if ($("cost-rows").children.length > 1) row.remove();
+    else { row.querySelector(".c-route").value = ""; acIn.value = ""; }
+  };
+  $("cost-rows").appendChild(row);
+}
+function addIndexBox(listId, value = "") {
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.inputMode = "decimal";
+  inp.placeholder = listId === "fx-list" ? "1,350" : "300";
+  inp.value = value;
+  inp.oninput = updateIndexCount;
+  $(listId).appendChild(inp);
+}
+const indexValues = (listId) => [...$(listId).querySelectorAll("input")]
+  .map((i) => i.value.replace(/[,\s]/g, "")).filter((v) => v && !isNaN(+v));
+function updateIndexCount() {
+  const fx = indexValues("fx-list").length, fuel = indexValues("fuel-list").length;
+  $("idx-count").textContent = fx || fuel
+    ? `환율 ${fx || "INDEX 평균 1"}개 x 유가 ${fuel || "INDEX 평균 1"}개 = ${(fx || 1) * (fuel || 1)}가지 경우를 계산합니다`
+    : "";
+}
+$("cost-add").onclick = () => addCostRow();
+document.querySelectorAll("button[data-add]").forEach((b) => (b.onclick = () => addIndexBox(b.dataset.add)));
+addCostRow();
+for (let i = 0; i < 3; i++) { addIndexBox("fx-list"); addIndexBox("fuel-list"); }
+
+$("run-cost").onclick = () => {
+  const lines = [];
+  for (const row of $("cost-rows").children) {
+    const route = row.querySelector(".c-route").value.trim().toUpperCase();
+    if (!route) continue;
+    if (row.querySelector(".c-all").checked) { lines.push(`${route} 기종별 비용`); continue; }
+    const acs = row.querySelector(".c-ac").value.split(/[,\s/]+/).map((a) => a.trim().toUpperCase()).filter(Boolean);
+    if (!acs.length) return setStatus(`${route} 의 기종을 입력하세요 (또는 '보유 기종 전부')`);
+    for (const ac of acs) lines.push(`${route} ${ac} 비용`);
+  }
+  if (!lines.length) return setStatus("노선을 입력하세요");
+  const fx = indexValues("fx-list"), fuel = indexValues("fuel-list");
+  const head = [fx.length ? `환율 : ${fx.join("/")}` : "", fuel.length ? `유가 : ${fuel.join("/")}` : ""].filter(Boolean).join(", ");
+  const text = [head, ...lines].filter(Boolean).join("\n") + "\n";
+  const period = $("c-period").value.trim() || "W26";
+  runTool("run.py", ["입력.txt", "--period", period, "--yes",
+    "--fixed-alloc", document.querySelector("input[name=calloc]:checked").value], text);
 };
 
 // ── 시작 ──────────────────────────────────────────────────────────────

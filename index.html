@@ -63,6 +63,13 @@
   details { margin-top: 8px; font-size: 13px; }
   summary { cursor: pointer; color: var(--brand); }
   table.notation { border-collapse: collapse; margin: 6px 0; width: 100%; }
+  button.small { padding: 4px 10px; font-size: 12.5px; }
+  .cost-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 6px; }
+  .cost-row .del { background: #fff; color: var(--muted); border-color: var(--line); padding: 3px 9px; }
+  .idx-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+  .idx-label { width: 110px; font-size: 13px; }
+  .idx-list { display: contents; }
+  .idx-list input { width: 76px; text-align: right; }
   table.notation td { border-top: 1px solid var(--line); padding: 4px 6px; vertical-align: top; }
 </style>
 </head>
@@ -88,7 +95,7 @@
     <h2><span class="step">2</span>분석</h2>
     <div class="tabs">
       <button data-tab="compare" class="on">수지비교</button>
-      <button data-tab="breakeven">손익분기 계산기</button>
+      <button data-tab="cost">비용</button>
     </div>
 
     <div class="pane" id="pane-compare">
@@ -139,20 +146,29 @@
       <button id="run-compare" disabled>계산 · 엑셀 받기</button>
     </div>
 
-    <div class="pane" id="pane-breakeven" hidden>
-      <p class="muted">이 노선·기종을 계속 띄우려면 최소 탑승률/운임이 얼마여야 하는지 역산합니다. 결과는 아래 기록 창에 나옵니다.</p>
+    <div class="pane" id="pane-cost" hidden>
+      <p class="muted">노선·기종별 1왕복 비용(변동비·총비용)을 뽑습니다. 환율·유가를 여러 개 넣으면 경우의 수 전부를 표로 냅니다.</p>
+      <fieldset>
+        <legend>노선 · 기종</legend>
+        <div id="cost-rows"></div>
+        <button type="button" class="ghost small" id="cost-add">+ 노선 추가</button>
+        <p class="muted">기종은 쉼표로 여러 개 (예: B738, A333). '보유 기종 전부'를 켜면 6개 기종을 나란히 비교합니다.</p>
+      </fieldset>
+      <fieldset>
+        <legend>환율 · 유가 INDEX <span class="muted">(비우면 경영기획 INDEX 의 기간 평균)</span></legend>
+        <div class="idx-row"><span class="idx-label">환율 (원)</span><span class="idx-list" id="fx-list"></span>
+          <button type="button" class="ghost small" data-add="fx-list">+</button></div>
+        <div class="idx-row"><span class="idx-label">유가 (USC/USG)</span><span class="idx-list" id="fuel-list"></span>
+          <button type="button" class="ghost small" data-add="fuel-list">+</button></div>
+        <p class="muted" id="idx-count"></p>
+      </fieldset>
       <div class="row">
-        <label>노선 <input type="text" id="b-route" size="10" placeholder="ICNDAD"></label>
-        <label>기종 <input type="text" id="b-ac" size="8" placeholder="B738"></label>
-        <label>기간 <input type="text" id="b-period" size="10" value="W26"></label>
+        <label>기간 <input type="text" id="c-period" size="18" value="W26" placeholder="W26 / 27.01~27.02"></label>
+        <span class="muted">간접고정비</span>
+        <label class="opt"><input type="radio" name="calloc" value="volume" checked> 편수·B/T (권장)</label>
+        <label class="opt"><input type="radio" name="calloc" value="revenue"> 운송수입</label>
       </div>
-      <div class="row">
-        <label>A/R 고정 <input type="text" id="b-ar" size="10" placeholder="(선택) 150000"></label>
-        <label>L/F 고정(%) <input type="text" id="b-lf" size="6" placeholder="(선택) 85"></label>
-        <label class="opt"><input type="radio" name="balloc" value="volume" checked> 편수·B/T</label>
-        <label class="opt"><input type="radio" name="balloc" value="revenue"> 운송수입</label>
-      </div>
-      <button id="run-breakeven" disabled>계산</button>
+      <button id="run-cost" disabled>계산 · 엑셀 받기</button>
     </div>
   </section>
 
@@ -164,6 +180,7 @@
   </section>
   <p class="muted">지원 브라우저 : 엣지 · 크롬. 사용법은 도구 폴더의 사용법.txt 와 같습니다.</p>
 </main>
+<datalist id="ac-list"><option>B738</option><option>B38M</option><option>A333</option><option>A332</option><option>A339</option><option>B77W</option></datalist>
 <script src="app.js"></script>
 </body>
 </html>
