@@ -3,22 +3,19 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime
-from openpyxl import Workbook
-from openpyxl.utils import get_column_letter as L
 from profit_tool.actuals import Actuals
 from profit_tool.dataset import Dataset
-from profit_tool.engine import Engine, Leg
+from profit_tool.engine import Engine, Leg, Scenario
 from profit_tool.period import Period
-from profit_tool.report import BOX, CENTER, F_BODY, F_HEAD_W, F_NOTE, F_SUM, F_TITLE_W, HEAD_FILL, LEFT, MONEY, PCT, ROW_H, TITLE_FILL, _text
+from profit_tool.report import build_narrative, write_excel
 from profit_tool.schedule import month_spans, parse_schedule
 BASE = __import__('pathlib').Path(__file__).resolve().parent
 EOK = 100000000
-COLS = [('년월', 9, None), ('기종', 11, None), ('운항편수(OW)', 11, '#,##0'), ('공급석', 10, '#,##0'), ('수송석', 10, '#,##0'), ('L/F', 8, '#,##0.0%'), ('A/R', 10, MONEY), ('여객수입', 14, MONEY), ('부대수입', 12, MONEY), ('화물수입', 12, MONEY), ('총수입', 14, MONEY), ('총비용', 14, MONEY), ('영업이익', 14, MONEY), ('영업이익률', 11, '#,##0.0%'), ('1왕복 총비용', 12, MONEY), ('근거', 34, None)]
 
 def eprint(*a):
     print(*a, file=sys.stderr)
 
-def month_rows(ds, act, route, period, sched, ac_hint, alloc):
+def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0):
     for lo, hi in month_spans(period):
         y, m = (lo.year, lo.month)
         mp = Period.parse(f'{y % 100}.{m:02d}')
@@ -72,12 +69,15 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc):
         lf = pax / seats if seats else 0.0
         ar = rev / pax if pax else 0.0
         cost = anc = 0.0
+        results = []
         for code, rt_i, cargo_rt in legs:
-            res = eng.compute(Leg(flight_no='', route=route, aircraft=code, round_trips=rt_i, lf=lf, ar=ar, cargo_rt=cargo_rt))
+            res = eng.compute(Leg(flight_no='', route=route, aircraft=code, round_trips=rt_i, lf=lf, ar=ar, cargo_rt=cargo_rt, rt_source=src))
+            res.item = item
+            results.append(res)
             cost += res.total_cost * rt_i
             anc += (res.ancillary_revenue or 0) * rt_i
         names = ' + '.join((f"{ds.aircraft[c]['name']}" for c, _, _ in legs))
-        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), src=src + (f' · {pool_note}' if pool_note else ''))
+        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), src=src + (f' · {pool_note}' if pool_note else ''))
 
 def _engine_for(ds, mp, alloc):
     eng = Engine(ds, mp, fixed_alloc=alloc)
@@ -112,73 +112,39 @@ def _main_ac(act, ds, route):
     name = max(cnt, key=cnt.get)
     return next((c for c, d in ds.aircraft.items() if d['name'] == name), 'B738')
 
-def write_excel(path, blocks, period, alloc, ds):
+def build_report(path, blocks, period, alloc, ds, sched):
     live = [d for _, rows in blocks for d in rows if not d['empty']]
     season_fallback = any((d.get('fallback') for d in live))
     pool_fix = any((d.get('pool_fix') for d in live))
-    wb = Workbook()
-    ws = wb.active
-    ws.title = '노선수지'
-    ws.sheet_view.showGridLines = False
-    ws.column_dimensions['A'].width = 1.4
-    ws.row_dimensions[2].height = 30
-    t = ws.cell(2, 2, f'노선 수지 ({period.label})')
-    t.font, t.fill, t.alignment = (F_TITLE_W, TITLE_FILL, LEFT)
-    ws.merge_cells(start_row=2, start_column=2, end_row=2, end_column=1 + len(COLS))
-    for i, (_, w, _) in enumerate(COLS):
-        ws.column_dimensions[L(2 + i)].width = w
-    r = 4
-    for route, rows in blocks:
-        _text(ws, r, 2, f'■ {route}', F_SUM)
-        r += 1
-        ws.row_dimensions[r].height = ROW_H
-        for i, (head, _, _) in enumerate(COLS):
-            c = ws.cell(r, 2 + i, head)
-            c.font, c.fill, c.alignment, c.border = (F_HEAD_W, HEAD_FILL, CENTER, BOX)
-        r += 1
-        first = r
-        for d in rows:
-            ws.row_dimensions[r].height = ROW_H
-            vals = [datetime(d['y'], d['m'], 1)] + ([''] * 13 if d['empty'] else [d['ac'], d['ow'], round(d['seats']), round(d['pax']), f'=F{r}/E{r}', f'=I{r}/F{r}', round(d['rev']), round(d['anc']), round(d['cargo']), f'=I{r}+J{r}+K{r}', round(d['cost']), f'=L{r}-M{r}', f'=N{r}/L{r}']) + ['' if d['empty'] else round(d['cost'] / max(d['rt'], 1e-09)), d['src']]
-            for i, v in enumerate(vals):
-                c = ws.cell(r, 2 + i, v if v != '' else None)
-                c.font, c.border = (F_BODY, BOX)
-                c.alignment = LEFT if i == len(COLS) - 1 else CENTER
-                fmt = COLS[i][2]
-                if i == 0:
-                    c.number_format = 'yyyy-mm'
-                elif i == 12:
-                    c.number_format = '[Red]#,##0;[Blue]-#,##0;[Black]"-"'
-                elif i == 13:
-                    c.number_format = PCT
-                elif fmt:
-                    c.number_format = fmt
-            r += 1
-        last = r - 1
-        ws.row_dimensions[r].height = ROW_H
-        live = [d for d in rows if not d['empty']]
-        cells = ['합계', '', f'=SUM(D{first}:D{last})', f'=SUM(E{first}:E{last})', f'=SUM(F{first}:F{last})', f'=F{r}/E{r}', f'=I{r}/F{r}', f'=SUM(I{first}:I{last})', f'=SUM(J{first}:J{last})', f'=SUM(K{first}:K{last})', f'=SUM(L{first}:L{last})', f'=SUM(M{first}:M{last})', f'=L{r}-M{r}', f'=N{r}/L{r}', f"=M{r}/{sum((d['rt'] for d in live)) or 1}", '']
-        for i, v in enumerate(cells):
-            c = ws.cell(r, 2 + i, v if v != '' else None)
-            c.font, c.fill, c.alignment, c.border = (F_HEAD_W, HEAD_FILL, CENTER, BOX)
-            fmt = COLS[i][2]
-            if i == 13:
-                c.number_format = PCT
-            elif i == 12:
-                c.number_format = '[Red]#,##0;[Blue]-#,##0;[Black]"-"'
-            elif fmt:
-                c.number_format = fmt
-        r += 2
-    notes = [f'기간 : {period.label}', '실적 : 과거실적 DATA 의 해당 월 편수·공급석·수송석·운송수입·화물수입 그대로 (부대수입은 비용추정용 파일의 대노선별 RASK 기준 추정)', '실적이 없는 달 : 입력한 운항스케줄로 편수를 세고, L/F·A/R 은 사업계획 목표실적(있으면) 또는 전년 동월 실적', f"비용 : W26 비용추정용 파일 기종별-노선별 CASK + 해당 월 환율·유가 INDEX, 간접고정비 {('편수·B/T' if alloc == 'volume' else '운송수입')} 기준 배부", '영업이익 = 총수입(여객+부대+화물) - 총비용']
+    period_results, monthly_results = ([], [])
+    route_assumptions = {}
+    for item, (route, rows) in enumerate(blocks):
+        got = [d for d in rows if not d['empty']]
+        if not got:
+            continue
+        for d in got:
+            monthly_results += d['results']
+        rt = sum((d['rt'] for d in got))
+        seats = sum((d['seats'] for d in got))
+        pax = sum((d['pax'] for d in got))
+        rev = sum((d['rev'] for d in got))
+        cargo = sum((d['cargo'] for d in got))
+        code = max({c: sum((r_ for cc, r_, _ in d['legs'] if cc == c)) for d in got for c, _, _ in d['legs']}.items(), key=lambda x: x[1])[0]
+        eng, _ = _engine_for(ds, period, alloc)
+        res = eng.compute(Leg(flight_no='', route=route, aircraft=code, round_trips=rt, lf=pax / seats if seats else None, ar=rev / pax if pax else None, cargo_rt=cargo / rt if rt else 0.0, rt_source=f"실적 {sum((d['ow'] for d in got)):,.0f}편(OW) = {rt:,.0f}왕복"))
+        res.item = item
+        res.period = period.label
+        period_results.append(res)
+        route_assumptions[route] = [f'기간 : {period.label}', '이 시트의 월별 행이 RAW DATA 입니다. 파란 칸(CFG·운항횟수·L/F·A/R)을 고치면 이 시트 합계와 요약 시트가 함께 바뀝니다', '운항횟수·공급석·수송석·운송수입·화물수입 : 과거실적 DATA 실적 그대로 (실적 없는 달은 입력한 운항스케줄 + 사업계획/전년 실적)'] + [f"{d['y'] % 100:02d}.{d['m']:02d} : {d['src']}" for d in got]
+    scenarios = [Scenario('실적 기준', results=period_results)]
+    monthly = [Scenario('실적 기준', results=monthly_results)]
+    assumptions = [f'기간 : {period.label}', f"비용 : W26 비용추정용 파일 기종별-노선별 CASK + 해당 월 환율·유가 INDEX, 간접고정비 {('편수·B/T' if alloc == 'volume' else '운송수입')} 기준 배부", '수입 : 과거실적 DATA 의 실제 운송수입·화물수입 (부대수입은 대노선별 RASK 기준 추정)', '운항횟수 : 과거실적 DATA 의 실제 편수' + (f' · 실적 없는 달은 {sched}' if sched else ''), '조건 : 비교 없이 노선 자체의 월별 수지 (실적 기준)']
     if season_fallback:
-        notes.append('배부단가 : 대상 기간이 비용파일 시즌(W26) 밖이라 시즌 평균 배부단가를 대신 썼습니다 (환율·유가는 해당 월 INDEX 그대로)')
+        assumptions.append('배부단가 : 대상 기간이 비용파일 시즌(W26) 밖이라 시즌 평균 배부단가를 대신 썼습니다 (환율·유가는 해당 월 INDEX 그대로)')
     if pool_fix:
-        notes.append('고정비 POOL 이 일부 기간치뿐인 달(시즌 시작 월)은 배부단가만 가장 가까운 정상 달 것을 썼습니다 - 그대로 두면 고정비가 1/4 수준으로 과소계상됩니다')
-    _text(ws, r, 2, '■ 산출기준', F_SUM)
-    for i, t in enumerate(notes, 1):
-        _text(ws, r + i, 2, f'   - {t}', F_NOTE)
-    wb.save(path)
-    return path
+        assumptions.append('고정비 POOL 이 일부 기간치뿐인 달(시즌 시작 월)은 배부단가만 가장 가까운 정상 달 것을 썼습니다 - 그대로 두면 고정비가 1/4 수준으로 빠집니다')
+    narrative = build_narrative(scenarios, assumptions)
+    return write_excel(path, f'노선 수지 ({period.label})', scenarios, assumptions, narrative, monthly=monthly, route_assumptions=route_assumptions, period_label=period.label)
 
 def main():
     ap = argparse.ArgumentParser(description='노선 수지 (비교 없이 한 노선의 월별 손익)')
@@ -221,7 +187,7 @@ def main():
     tag = '+'.join((r.replace(' V.V', '').replace('-', '') for r, _ in blocks))[:60]
     out = args.out or BASE / 'output' / f'노선수지_{datetime.now():%y%m%d} ({tag} {period.label}).xlsx'
     __import__('pathlib').Path(out).parent.mkdir(parents=True, exist_ok=True)
-    write_excel(out, blocks, period, args.fixed_alloc, ds)
+    build_report(out, blocks, period, args.fixed_alloc, ds, args.sched)
     eprint(f'\n[저장] {out}')
 if __name__ == '__main__':
     main()
