@@ -8,7 +8,7 @@ from pathlib import Path
 import openpyxl
 from .paths import RAW_DIR, TOOL
 DOW = ('월', '화', '수', '목', '금', '토', '일')
-VERSION = 2
+VERSION = 4
 CACHE = TOOL / 'data' / 'raw_cache.pkl'
 ACT_PAT = re.compile('실적.*\\(?\\s*일자', re.I)
 CAP_PAT = re.compile('공급석|운항편수')
@@ -55,6 +55,7 @@ def _build(act_files, cap_files) -> dict:
     day = defaultdict(dict)
     fc = defaultdict(lambda: [0.0, 0.0])
     pax_day = defaultdict(lambda: [0.0, 0.0])
+    day_ac = defaultdict(lambda: [0.0, 0.0])
     lo = hi = None
     for f in act_files:
         for r in _rows(f):
@@ -80,6 +81,9 @@ def _build(act_files, cap_files) -> dict:
                 e = fc[route, ac, d.year, d.month]
                 e[0] += n
                 e[1] += seats
+                e = day_ac[route, d, ac]
+                e[0] += n
+                e[1] += seats
             lo = d if lo is None or d < lo else lo
             hi = d if hi is None or d > hi else hi
     for (route, d), (pax, rev) in pax_day.items():
@@ -90,7 +94,7 @@ def _build(act_files, cap_files) -> dict:
         cur[3] += rev
     for route, days in day.items():
         for d, (n, seats, pax, rev) in days.items():
-            if seats <= 0:
+            if seats <= 0 or pax <= 0:
                 continue
             for key in ((route, d.year, d.month), (route, d.year, d.month, DOW[d.weekday()])):
                 store = agg if len(key) == 3 else agg_dow
@@ -98,7 +102,7 @@ def _build(act_files, cap_files) -> dict:
                 e[0] += seats
                 e[1] += pax
                 e[2] += rev
-    return dict(agg=dict(agg), agg_dow=dict(agg_dow), day={r: dict(v) for r, v in day.items()}, fc=dict(fc), day_range=(lo, hi) if lo else None)
+    return dict(agg=dict(agg), agg_dow=dict(agg_dow), day={r: dict(v) for r, v in day.items()}, fc=dict(fc), day_ac=dict(day_ac), day_range=(lo, hi) if lo else None)
 
 def load(quiet: bool=True) -> dict | None:
     act_files, cap_files = _files()
