@@ -138,6 +138,7 @@
     <div class="tabs">
       <button data-tab="compare" class="on">수지비교</button>
       <button data-tab="cost">비용</button>
+      <button data-tab="route">노선 수지</button>
     </div>
 
     <div class="pane" id="pane-compare">
@@ -210,6 +211,26 @@
         <span class="muted">계산 전에 노선·기종·왕복수·L/F·A/R 을 어떻게 읽었는지 먼저 봅니다</span>
       </div>
       <div id="preview"></div>
+    </div>
+
+    <div class="pane" id="pane-route" hidden>
+      <p class="muted">비교 없이 <b>그 노선의 월별 수지</b>를 그대로 뽑습니다. 실적이 있는 달은 실제 편수·공급석·수송석·운송수입을 쓰고,
+        비용만 CASK·환율·유가로 얹습니다. (예: PUS-KIX S26 실적)</p>
+      <div class="row">
+        <label>노선 <input type="text" id="rt-routes" size="30" placeholder="PUSKIX 또는 PUSKIX, PUSFUK, PUSCTS"></label>
+        <label>기간 <input type="text" id="rt-period" size="14" value="S26" placeholder="S26 / W26 / 26.01~26.06"></label>
+      </div>
+      <div class="row">
+        <label>운항스케줄 <input type="text" id="rt-sched" size="16" placeholder="(선택) 2 DAILY"></label>
+        <label>기종 <input type="text" id="rt-ac" size="8" list="ac-list" placeholder="(선택) B738"></label>
+        <span class="muted">실적이 아직 없는 달을 추정할 때만 씁니다</span>
+      </div>
+      <div class="row">
+        <span class="muted">간접고정비</span>
+        <label class="opt"><input type="radio" name="rtalloc" value="volume" checked> 편수·B/T (권장)</label>
+        <label class="opt"><input type="radio" name="rtalloc" value="revenue"> 운송수입</label>
+      </div>
+      <button id="run-route" disabled>계산 · 엑셀 받기</button>
     </div>
 
     <div class="pane" id="pane-cost" hidden>

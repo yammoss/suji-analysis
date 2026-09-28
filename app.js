@@ -40,7 +40,7 @@ function setStatus(text, busy = false) {
   $("statusline").classList.toggle("busy", busy);
 }
 function setRunnable(on) {
-  for (const b of ["run-compare", "preview-compare", "run-cost"]) $(b).disabled = !on;
+  for (const b of ["run-compare", "preview-compare", "run-cost", "run-route"]) $(b).disabled = !on;
 }
 
 // ── 폴더 기억 (IndexedDB) ────────────────────────────────────────────
@@ -528,6 +528,18 @@ function setMode(m) {
 document.querySelectorAll(".modes button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
 cards.push(newCard());
 renderCards();
+
+// ── 노선 수지 탭 ──────────────────────────────────────────────────────
+$("run-route").onclick = () => {
+  const routes = $("rt-routes").value.split(/[,\s/]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+  if (!routes.length) return setStatus("노선을 입력하세요");
+  const argv = [...routes, "--period", $("rt-period").value.trim() || "S26",
+    "--fixed-alloc", document.querySelector("input[name=rtalloc]:checked").value];
+  const sched = $("rt-sched").value.trim(), ac = $("rt-ac").value.trim();
+  if (sched) argv.push("--sched", sched);
+  if (ac) argv.push("--ac", ac.toUpperCase());
+  runTool("노선수지.py", argv);
+};
 
 // ── 비용 탭 ───────────────────────────────────────────────────────────
 function addCostRow(route = "", ac = "") {
