@@ -2,29 +2,46 @@
 from __future__ import annotations
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from profit_tool.actuals import Actuals
 from profit_tool.dataset import Dataset
 from profit_tool.engine import Engine, Leg, Scenario
 from profit_tool.period import Period
 from profit_tool.report import build_narrative, write_excel
 from profit_tool.schedule import month_spans, parse_schedule
+from profit_tool.weekly import Weekly
 BASE = __import__('pathlib').Path(__file__).resolve().parent
 EOK = 100000000
 
 def eprint(*a):
     print(*a, file=sys.stderr)
 
-def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0):
+def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None):
     for lo, hi in month_spans(period):
         y, m = (lo.year, lo.month)
         mp = Period.parse(f'{y % 100}.{m:02d}')
+        wk_scaled = {}
         eng, pool_note = _engine_for(ds, mp, alloc)
         agg = act._agg.get((route, y, m))
         mix = {a: v for (r, a, yy, mm), v in act._cargo.items() if r == route and yy == y and (mm == m) and v[1]}
+        wk_row = wk.get(route, y, m) if wk is not None and wk.available else None
         part = _daily_span(act, route, lo, hi)
         full_month = lo.day == 1 and (hi + __import__('datetime').timedelta(days=1)).month != m
-        if mix and (part or (agg and agg[0] > 0 and full_month)):
+        if wk_row and wk_row.get('rt'):
+            span_fc, _ = act.capacity_span(route, lo, hi)
+            month_fc, _ = act.capacity_span(route, lo.replace(day=1), (lo.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
+            k = span_fc / month_fc if span_fc and month_fc else 1.0
+            rt = wk_row['rt'] * k
+            seats = (wk_row['seats'] or 0) * k
+            pax = (wk_row['pax'] or 0) * k
+            rev = (wk_row['pax_rev'] or 0) * k
+            cargo_tot = (wk_row['cargo'] or 0) * k
+            mixw = act.capacity(route, y, m)
+            code = (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixw, key=lambda x: mixw[x][0])), None) if mixw else None) or ac_hint or _main_ac(act, ds, route)
+            legs = [(code, rt, cargo_tot / max(rt, 1e-09))]
+            src = f'{wk.label}' + (f' ({k:.0%} 구간)' if k < 0.999 else '')
+            wk_scaled = {a: (wk_row[a] or 0) * k for a in ('var', 'fix', 'anc')}
+        elif mix and (part or (agg and agg[0] > 0 and full_month)):
             clipped = part and (not full_month or part[5] < hi)
             if clipped:
                 fc_tot, seats, pax, rev, d0, d1 = part
@@ -45,39 +62,67 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0):
                 rt_i = rt * w
                 legs.append((code, rt_i, cargo * share / max(rt_i, 1e-09)))
         else:
-            if sched is None:
-                yield dict(y=y, m=m, empty=True, src='실적 없음 (--sched 로 스케줄을 주면 추정)')
+            cap_fc, cap_seats = act.capacity_span(route, lo, hi)
+            sched_note = ''
+            if cap_fc:
+                rt = cap_fc / 2
+                sched_note = '확정 스케줄'
+            elif sched:
+                span = Period.parse(f'{lo:%y.%m.%d}~{hi:%y.%m.%d}')
+                r = parse_schedule(sched, span)
+                if r is None:
+                    yield dict(y=y, m=m, empty=True, src=f"스케줄 '{sched}' 인식 실패")
+                    continue
+                rt = r.round_trips
+                sched_note = sched
+            else:
+                yield dict(y=y, m=m, empty=True, src='실적·확정 스케줄 없음 (--sched 로 스케줄을 주면 추정)')
                 continue
-            span = Period.parse(f'{lo:%y.%m.%d}~{hi:%y.%m.%d}')
-            r = parse_schedule(sched, span)
-            if r is None:
-                yield dict(y=y, m=m, empty=True, src=f"스케줄 '{sched}' 인식 실패")
-                continue
-            rt = r.round_trips
             a = act.for_period(route, mp, years_back=1, use_plan=True)
             if a is None:
                 yield dict(y=y, m=m, empty=True, src='L/F·A/R 실적·계획 없음')
                 continue
-            code = ac_hint or _main_ac(act, ds, route)
+            mix = act.capacity(route, y, m)
+            code = ac_hint or (next((c for c, d in ds.aircraft.items() if d['name'] == max(mix, key=lambda k: mix[k][0])), None) if mix else None) or _main_ac(act, ds, route)
             cargo = act.cargo_revenue(route, ds.aircraft[code]['name'], mp, years_back=1)
             seats = ds.seats(code) * rt * 2
             pax = seats * a.lf
             rev = pax * a.ar
             legs = [(code, rt, cargo.per_round_trip)]
             cargo_tot = cargo.per_round_trip * rt
-            src = a.source_label + f' · {sched}'
+            src = a.source_label + f' · {sched_note}'
         lf = pax / seats if seats else 0.0
         ar = rev / pax if pax else 0.0
         cost = anc = 0.0
         results = []
         for code, rt_i, cargo_rt in legs:
             res = eng.compute(Leg(flight_no='', route=route, aircraft=code, round_trips=rt_i, lf=lf, ar=ar, cargo_rt=cargo_rt, rt_source=src))
+            if wk_scaled:
+                _apply_weekly(res, wk_scaled, rt_i)
             res.item = item
             results.append(res)
             cost += res.total_cost * rt_i
             anc += (res.ancillary_revenue or 0) * rt_i
         names = ' + '.join((f"{ds.aircraft[c]['name']}" for c, _, _ in legs))
-        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), src=src + (f' · {pool_note}' if pool_note else ''))
+        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), src=src + (f' · {pool_note}' if pool_note and (not wk_scaled) else ''))
+
+def _apply_weekly(res, wk, rt_i):
+    if not rt_i:
+        return
+    for tgt_key, cur_attr, put_attr, const_attr in (('var', 'variable_cost', 'indirect_var', 'var_const'), ('fix', 'fixed_cost', 'indirect_fix', 'fix_const')):
+        tgt = wk[tgt_key] / rt_i
+        cur = getattr(res, cur_attr)
+        if cur is None:
+            continue
+        d = tgt - cur
+        setattr(res, put_attr, (getattr(res, put_attr) or 0) + d)
+        setattr(res, const_attr, (getattr(res, const_attr) or 0) + d)
+    if res.ancillary_revenue is not None:
+        d = wk['anc'] / rt_i - res.ancillary_revenue
+        res.ancillary_revenue += d
+        res.anc_const += d
+        if res.total_revenue is not None:
+            res.total_revenue += d
 
 def _engine_for(ds, mp, alloc):
     eng = Engine(ds, mp, fixed_alloc=alloc)
@@ -115,7 +160,8 @@ def _main_ac(act, ds, route):
 def build_report(path, blocks, period, alloc, ds, sched):
     live = [d for _, rows in blocks for d in rows if not d['empty']]
     season_fallback = any((d.get('fallback') for d in live))
-    pool_fix = any((d.get('pool_fix') for d in live))
+    pool_fix = any((d.get('pool_fix') and (not d.get('weekly')) for d in live))
+    weekly_note = next((d['src'] for d in live if d.get('weekly')), '')
     period_results, monthly_results = ([], [])
     route_assumptions = {}
     for item, (route, rows) in enumerate(blocks):
@@ -139,6 +185,8 @@ def build_report(path, blocks, period, alloc, ds, sched):
     scenarios = [Scenario('실적 기준', results=period_results)]
     monthly = [Scenario('실적 기준', results=monthly_results)]
     assumptions = [f'기간 : {period.label}', f"비용 : W26 비용추정용 파일 기종별-노선별 CASK + 해당 월 환율·유가 INDEX, 간접고정비 {('편수·B/T' if alloc == 'volume' else '운송수입')} 기준 배부", '수입 : 과거실적 DATA 의 실제 운송수입·화물수입 (부대수입은 대노선별 RASK 기준 추정)', '운항횟수 : 과거실적 DATA 의 실제 편수' + (f' · 실적 없는 달은 {sched}' if sched else ''), '조건 : 비교 없이 노선 자체의 월별 수지 (실적 기준)']
+    if weekly_note:
+        assumptions.append(f"주차별 추정실적({weekly_note.split(' · ')[0]})이 덮는 달은 그 파일의 L/F·A/R·편수와 변동비·고정비를 그대로 썼습니다 (나머지 달은 CASK 기준)")
     if season_fallback:
         assumptions.append('배부단가 : 대상 기간이 비용파일 시즌(W26) 밖이라 시즌 평균 배부단가를 대신 썼습니다 (환율·유가는 해당 월 INDEX 그대로)')
     if pool_fix:
@@ -153,9 +201,11 @@ def main():
     ap.add_argument('--sched', default=None, help='실적 없는 달에 쓸 운항스케줄 (DAILY, 2 DAILY, 4/W D1346 ...)')
     ap.add_argument('--ac', default=None, help='실적 없는 달에 쓸 기종 (기본: 그 노선 주력 기종)')
     ap.add_argument('--fixed-alloc', choices=('revenue', 'volume'), default='volume')
+    ap.add_argument('--no-weekly', action='store_true', help='주차별 추정실적을 쓰지 않고 전 기간 CASK 로만 계산')
     ap.add_argument('--out', default=None)
     args = ap.parse_args()
     ds, act = (Dataset(), Actuals())
+    wk = None if args.no_weekly else Weekly()
     period = Period.parse(args.period)
     ac_hint = ds.resolve_aircraft(args.ac) if args.ac else None
     if args.ac and (not ac_hint):
@@ -166,7 +216,7 @@ def main():
         if not route:
             eprint(f'   ! 노선 인식 실패 : {raw}')
             continue
-        rows = list(month_rows(ds, act, route, period, args.sched, ac_hint, args.fixed_alloc))
+        rows = list(month_rows(ds, act, route, period, args.sched, ac_hint, args.fixed_alloc, item=len(blocks), wk=wk))
         blocks.append((route, rows))
         eprint(f'\n■ {route} ({period.label})')
         eprint(f"   {'년월':<8}{'편수':>6}{'L/F':>8}{'A/R':>9}{'총수입':>12}{'총비용':>12}{'영업이익':>12}{'이익률':>8}  근거")

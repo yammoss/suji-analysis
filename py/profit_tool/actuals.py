@@ -129,6 +129,9 @@ class Actuals:
         self._day: dict[str, dict[date, list[float]]] = {}
         self.day_range: tuple[date, date] | None = None
         self.plan_sheets: list[str] = []
+        self.raw_label = ''
+        self._cap: dict = {}
+        self._cap_day: dict = {}
         if not self.available:
             return
         wb = openpyxl.load_workbook(self.path, read_only=True, data_only=True)
@@ -142,6 +145,42 @@ class Actuals:
                     continue
             self._read_sheet(ws, plan)
         wb.close()
+        self._overlay_raw()
+
+    def _overlay_raw(self) -> None:
+        if self.path != DEFAULT_ACTUALS:
+            return
+        from . import rawdata
+        data = rawdata.load()
+        if not data:
+            return
+        self.raw_label = rawdata.label()
+        self._cap = data['fc']
+        flown = {k for k, v in data['agg'].items() if v[1] > 0}
+        for k in [k for k in self._agg_dow if (k[0], k[1], k[2]) in flown]:
+            del self._agg_dow[k]
+        for key in flown:
+            self._agg[key] = list(data['agg'][key])
+        for key, v in data['agg_dow'].items():
+            if (key[0], key[1], key[2]) in flown:
+                self._agg_dow[key] = list(v)
+        for route, days in data['day'].items():
+            store = self._day.setdefault(route, {})
+            cap = self._cap_day.setdefault(route, {})
+            for d, v in days.items():
+                cap[d] = [v[0], v[1]]
+                if v[2] > 0:
+                    store[d] = list(v)
+                    lo, hi = self.day_range or (d, d)
+                    self.day_range = (min(lo, d), max(hi, d))
+
+    def capacity_span(self, route: str, lo: date, hi: date) -> tuple:
+        days = self._cap_day.get(route) or {}
+        got = [v for d, v in days.items() if lo <= d <= hi and v[1] > 0]
+        return (sum((v[0] for v in got)), sum((v[1] for v in got))) if got else (0.0, 0.0)
+
+    def capacity(self, route: str, y: int, m: int) -> dict:
+        return {ac: list(v) for (r, ac, yy, mm), v in getattr(self, '_cap', {}).items() if r == route and yy == y and (mm == m) and v[0]}
 
     def _read_matrix(self, ws) -> bool:
         rows = [list(r) for r in ws.iter_rows(values_only=True)]
