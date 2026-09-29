@@ -33,6 +33,7 @@ class CostBook:
         self.available = False
         self.months: list[tuple[int, int]] = []
         self._by: dict[tuple[str, int, int], dict] = {}
+        self._plan: dict[tuple[str, int, int], dict] = {}
         self._label: dict[tuple[int, int], tuple[str, str]] = {}
         if self.path is None or not self.path.exists():
             return
@@ -47,16 +48,21 @@ class CostBook:
             if not r or not r[0] or (not hasattr(r[2], 'year')):
                 continue
             route, y, m, kind, label = (str(r[0]).strip(), r[2].year, r[2].month, r[3], r[4])
-            cur = self._by.setdefault((route, y, m), {k: 0.0 for k in KEYS})
+            store = self._plan if str(kind or '').strip() == '계획' else self._by
+            cur = store.setdefault((route, y, m), {k: 0.0 for k in KEYS})
             for i, k in enumerate(KEYS, start=5):
-                if isinstance(r[i], (int, float)):
+                if i < len(r) and isinstance(r[i], (int, float)):
                     cur[k] += float(r[i])
-            self._label[y, m] = (str(kind or ''), str(label or ''))
+            if store is self._by:
+                self._label[y, m] = (str(kind or ''), str(label or ''))
         self.months = sorted(self._label)
         self.available = bool(self._by)
 
     def get(self, route: str, y: int, m: int) -> dict | None:
         return self._by.get((route, y, m))
+
+    def plan(self, route: str, y: int, m: int) -> dict | None:
+        return self._plan.get((route, y, m))
 
     def kind(self, y: int, m: int) -> str:
         return self._label.get((y, m), ('', ''))[0]

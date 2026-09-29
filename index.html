@@ -136,12 +136,12 @@
   <section class="card">
     <h2><span class="step">2</span>분석</h2>
     <div class="tabs">
-      <button data-tab="compare" class="on">수지비교</button>
+      <button data-tab="route" class="on">노선 수지</button>
+      <button data-tab="compare">수지비교</button>
       <button data-tab="cost">비용</button>
-      <button data-tab="route">노선 수지</button>
     </div>
 
-    <div class="pane" id="pane-compare">
+    <div class="pane" id="pane-compare" hidden>
       <div class="modes">
         <button type="button" data-mode="form" class="on">폼 입력</button>
         <button type="button" data-mode="text">직접 입력</button>
@@ -213,12 +213,13 @@
       <div id="preview"></div>
     </div>
 
-    <div class="pane" id="pane-route" hidden>
-      <p class="muted">비교 없이 <b>그 노선의 월별 수지</b>를 그대로 뽑습니다. 실적이 있는 달은 실제 편수·공급석·수송석·운송수입을 쓰고,
-        비용만 CASK·환율·유가로 얹습니다. (예: PUS-KIX S26 실적)</p>
+    <div class="pane" id="pane-route">
+      <p class="muted">비교 없이 <b>그 노선의 월별 수지</b>를 그대로 뽑습니다. 편수·공급석·수송석·운송수입은 실적을 쓰고,
+        비용은 확정실적(마감월) → 추정실적(인접월) → CASK 순으로 가져옵니다. (예: PUS-KIX S26 실적)</p>
       <div class="row">
         <label>노선 <input type="text" id="rt-routes" size="30" placeholder="PUSKIX 또는 PUSKIX, PUSFUK, PUSCTS"></label>
-        <label>기간 <input type="text" id="rt-period" size="14" value="S26" placeholder="S26 / W26 / 26.01~26.06"></label>
+        <label>기간 <input type="text" id="rt-period" size="18" value="S26" placeholder="S26 또는 S26, W26"></label>
+        <span class="muted">기간은 2개까지 (쉼표로)</span>
       </div>
       <div class="row">
         <label>운항스케줄 <input type="text" id="rt-sched" size="16" placeholder="(선택) 2 DAILY"></label>

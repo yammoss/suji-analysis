@@ -534,7 +534,8 @@ renderCards();
 $("run-route").onclick = () => {
   const routes = $("rt-routes").value.split(/[,\s/]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
   if (!routes.length) return setStatus("노선을 입력하세요");
-  const argv = [...routes, "--period", $("rt-period").value.trim() || "S26",
+  const periods = ($("rt-period").value.trim() || "S26").split(/[,\s]+/).filter(Boolean).slice(0, 2);
+  const argv = [...routes, "--period", ...periods,
     "--fixed-alloc", document.querySelector("input[name=rtalloc]:checked").value];
   const sched = $("rt-sched").value.trim(), ac = $("rt-ac").value.trim();
   if (sched) argv.push("--sched", sched);
