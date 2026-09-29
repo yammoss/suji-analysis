@@ -93,6 +93,7 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             src = ext_label + (f' · 구간 {k:.0%}' if k < 0.999 else '')
         else:
             cap_fc, cap_seats = act.capacity_span(route, lo, hi)
+            ac_seg = None
             plan = cb.plan(route, y, m) if cb is not None and cb.available and (not cap_fc) else None
             sched_note = ''
             if cap_fc:
@@ -112,14 +113,20 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
                 rt = r.round_trips
                 sched_note = sched
             else:
-                yield dict(y=y, m=m, empty=True, src='실적·확정 스케줄 없음 (--sched 로 스케줄을 주면 추정)')
-                continue
+                seg, ac_seg = _plan_volume(ds, route, y, m)
+                if not seg:
+                    yield dict(y=y, m=m, empty=True, src='실적·확정 스케줄·사업량 없음 (--sched 로 스케줄을 주면 추정)')
+                    continue
+                days = (hi - lo).days + 1
+                whole = ((lo.replace(day=28) + timedelta(days=4)).replace(day=1) - lo.replace(day=1)).days
+                rt = seg / 2 * (days / max(whole, 1))
+                sched_note = 'W26 파일 사업량'
             a = act.for_period(route, mp, years_back=1, use_plan=True)
             if a is None:
                 yield dict(y=y, m=m, empty=True, src='L/F·A/R 실적·계획 없음')
                 continue
             mixc = act.capacity(route, y, m)
-            code = ac_hint or (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixc, key=lambda k2: mixc[k2][0])), None) if mixc else None) or _main_ac(act, ds, route)
+            code = ac_hint or (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixc, key=lambda k2: mixc[k2][0])), None) if mixc else None) or (ac_seg if sched_note == 'W26 파일 사업량' and ac_seg else None) or _main_ac(act, ds, route)
             cargo = act.cargo_revenue(route, ds.aircraft[code]['name'], mp, years_back=1)
             seats = ds.seats(code) * rt * 2
             pax = seats * a.lf
@@ -174,6 +181,23 @@ def _engine_for(ds, mp, alloc):
     pick = min(cands, key=lambda i: abs(i - here))
     alt = Engine(ds, Period.parse(ds.months[pick]), fixed_alloc=alloc, fx=eng.fx, fuel=eng.fuel)
     return (alt, f'고정비 배부는 {ds.months[pick]} 단가')
+
+def _plan_volume(ds, route, y, m):
+    key = f'{y % 100:02d}.{m:02d}'
+    if key not in ds.months:
+        return (0.0, None)
+    i = ds.months.index(key)
+    plan = ds.plan_by_route.get(route)
+    if not plan:
+        return (0.0, None)
+    seg = plan['total'][i] if i < len(plan['total']) else 0.0
+    detail = (ds.plan_detail or {}).get(route) or {}
+    best, best_fc = (None, 0.0)
+    for code, v in detail.items():
+        fc = (v.get('fc') or [0])[i] if i < len(v.get('fc') or []) else 0.0
+        if fc > best_fc:
+            best, best_fc = (code, fc)
+    return (seg, best)
 
 def _daily_span(act, route, lo, hi):
     days = act._day.get(route)
