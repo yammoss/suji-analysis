@@ -539,10 +539,7 @@ $("run-route").onclick = () => {
     .filter(Boolean).slice(0, 2);
   const argv = [...routes, "--period", ...periods,
     "--fixed-alloc", document.querySelector("input[name=rtalloc]:checked").value];
-  const sched = $("rt-sched").value.trim(), ac = $("rt-ac").value.trim();
-  if (sched) argv.push("--sched", sched);
-  if (ac) argv.push("--ac", ac.toUpperCase());
-  runTool("노선수지.py", argv);
+  runTool("노선수지.py", argv);        // 편수·기종은 실적 → 확정 스케줄 → 사업계획 순으로 자동
 };
 
 // ── 비용 탭 ───────────────────────────────────────────────────────────

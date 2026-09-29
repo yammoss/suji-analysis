@@ -215,16 +215,12 @@
 
     <div class="pane" id="pane-route">
       <p class="muted">비교 없이 <b>그 노선의 월별 수지</b>를 그대로 뽑습니다. 편수·공급석·수송석·운송수입은 실적을 쓰고,
-        비용은 확정실적(마감월) → 추정실적(인접월) → CASK 순으로 가져옵니다. (예: PUS-KIX S26 실적)</p>
+        비용은 확정실적(마감월) → 추정실적(인접월) → CASK 순으로 가져옵니다.<br>
+        앞으로의 달은 확정 스케줄과 사업계획으로 자동으로 채웁니다. 그 노선이 안 뜨는 달은 빈칸으로 둡니다.</p>
       <div class="row">
         <label>노선 <input type="text" id="rt-routes" size="30" placeholder="PUSKIX 또는 PUSKIX, PUSFUK, PUSCTS"></label>
         <label>기간 <input type="text" id="rt-period" size="22" value="S26" placeholder="S26 / 26년 / 26.01~27.03"></label>
         <span class="muted">시즌(S26·W26) · 연도(26년) · 구간(26년1월~27년3월) · 2개까지 쉼표로</span>
-      </div>
-      <div class="row">
-        <label>운항스케줄 <input type="text" id="rt-sched" size="16" placeholder="(선택) 2 DAILY"></label>
-        <label>기종 <input type="text" id="rt-ac" size="8" list="ac-list" placeholder="(선택) B738"></label>
-        <span class="muted">실적이 아직 없는 달을 추정할 때만 씁니다</span>
       </div>
       <div class="row">
         <span class="muted">간접고정비</span>
