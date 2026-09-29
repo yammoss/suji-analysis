@@ -9,6 +9,7 @@ from profit_tool.engine import Engine, Leg, Scenario
 from profit_tool.period import Period
 from profit_tool.report import build_narrative, write_excel
 from profit_tool.schedule import month_spans, parse_schedule
+from profit_tool.costbook import CostBook
 from profit_tool.mgmt import Mgmt
 from profit_tool.weekly import Weekly
 BASE = __import__('pathlib').Path(__file__).resolve().parent
@@ -17,7 +18,7 @@ EOK = 100000000
 def eprint(*a):
     print(*a, file=sys.stderr)
 
-def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, mg=None):
+def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, mg=None, cb=None):
     for lo, hi in month_spans(period):
         y, m = (lo.year, lo.month)
         mp = Period.parse(f'{y % 100}.{m:02d}')
@@ -38,24 +39,14 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             if got and got.get('rt'):
                 ext_row, ext_kind = (got, '추정')
                 ext_label = f'추정실적({wk.label_of(y, m)})'
-        wk_row = ext_row
+        if ext_row is None and cb is not None and cb.available:
+            got = cb.get(route, y, m)
+            if got and got.get('rt'):
+                ext_row, ext_kind = (got, cb.kind(y, m) or '추정')
+                ext_label = f'{ext_kind}실적({cb.label_of(y, m)})'
         part = _daily_span(act, route, lo, hi)
-        full_month = lo.day == 1 and (hi + __import__('datetime').timedelta(days=1)).month != m
-        if wk_row and wk_row.get('rt'):
-            span_fc, _ = act.capacity_span(route, lo, hi)
-            month_fc, _ = act.capacity_span(route, lo.replace(day=1), (lo.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
-            k = span_fc / month_fc if span_fc and month_fc else 1.0
-            rt = wk_row['rt'] * k
-            seats = (wk_row['seats'] or 0) * k
-            pax = (wk_row['pax'] or 0) * k
-            rev = (wk_row['pax_rev'] or 0) * k
-            cargo_tot = (wk_row['cargo'] or 0) * k
-            mixw = act.capacity(route, y, m)
-            code = (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixw, key=lambda x: mixw[x][0])), None) if mixw else None) or ac_hint or _main_ac(act, ds, route)
-            legs = [(code, rt, cargo_tot / max(rt, 1e-09))]
-            src = ext_label + (f' · 구간 {k:.0%}' if k < 0.999 else '')
-            wk_scaled = {a: (wk_row[a] or 0) * k for a in ('var', 'fix', 'anc')}
-        elif mix and (part or (agg and agg[0] > 0 and full_month)):
+        full_month = lo.day == 1 and (hi + timedelta(days=1)).month != m
+        if mix and (part or (agg and agg[0] > 0 and full_month)):
             clipped = part and (not full_month or part[5] < hi)
             if clipped:
                 fc_tot, seats, pax, rev, d0, d1 = part
@@ -75,6 +66,19 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
                 w = fc / max(sum((v[1] for v in mix.values())), 1e-09)
                 rt_i = rt * w
                 legs.append((code, rt_i, cargo * share / max(rt_i, 1e-09)))
+        elif ext_row and ext_row.get('rt'):
+            span_fc, _ = act.capacity_span(route, lo, hi)
+            month_fc, _ = act.capacity_span(route, lo.replace(day=1), (lo.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
+            k = span_fc / month_fc if span_fc and month_fc else 1.0
+            rt = ext_row['rt'] * k
+            seats = (ext_row['seats'] or 0) * k
+            pax = (ext_row['pax'] or 0) * k
+            rev = (ext_row['pax_rev'] or 0) * k
+            cargo_tot = (ext_row['cargo'] or 0) * k
+            mixw = act.capacity(route, y, m)
+            code = (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixw, key=lambda x: mixw[x][0])), None) if mixw else None) or ac_hint or _main_ac(act, ds, route)
+            legs = [(code, rt, cargo_tot / max(rt, 1e-09))]
+            src = ext_label + (f' · 구간 {k:.0%}' if k < 0.999 else '')
         else:
             cap_fc, cap_seats = act.capacity_span(route, lo, hi)
             sched_note = ''
@@ -96,8 +100,8 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             if a is None:
                 yield dict(y=y, m=m, empty=True, src='L/F·A/R 실적·계획 없음')
                 continue
-            mix = act.capacity(route, y, m)
-            code = ac_hint or (next((c for c, d in ds.aircraft.items() if d['name'] == max(mix, key=lambda k: mix[k][0])), None) if mix else None) or _main_ac(act, ds, route)
+            mixc = act.capacity(route, y, m)
+            code = ac_hint or (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixc, key=lambda k2: mixc[k2][0])), None) if mixc else None) or _main_ac(act, ds, route)
             cargo = act.cargo_revenue(route, ds.aircraft[code]['name'], mp, years_back=1)
             seats = ds.seats(code) * rt * 2
             pax = seats * a.lf
@@ -105,6 +109,9 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             legs = [(code, rt, cargo.per_round_trip)]
             cargo_tot = cargo.per_round_trip * rt
             src = a.source_label + f' · {sched_note}'
+        if ext_row and ext_row.get('rt'):
+            wk_scaled = {a2: (ext_row.get(a2) or 0) / ext_row['rt'] for a2 in ('var', 'fix', 'anc')}
+            src += f' · 비용 {ext_label}'
         lf = pax / seats if seats else 0.0
         ar = rev / pax if pax else 0.0
         cost = anc = 0.0
@@ -112,27 +119,25 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
         for code, rt_i, cargo_rt in legs:
             res = eng.compute(Leg(flight_no='', route=route, aircraft=code, round_trips=rt_i, lf=lf, ar=ar, cargo_rt=cargo_rt, rt_source=src))
             if wk_scaled:
-                _apply_weekly(res, wk_scaled, rt_i)
+                _apply_weekly(res, wk_scaled)
             res.item = item
             results.append(res)
             cost += res.total_cost * rt_i
             anc += (res.ancillary_revenue or 0) * rt_i
         names = ' + '.join((f"{ds.aircraft[c]['name']}" for c, _, _ in legs))
-        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), cost_src=ext_kind or 'CASK', src=src if wk_scaled else src + ' · CASK(W26 파일' + (f', {pool_note.split()[-2]}' if pool_note else '') + f', {y % 100}.{m:02d} INDEX)')
+        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), cost_src=ext_kind or 'CASK', src=src if wk_scaled else src + ' · 비용 CASK(W26 파일' + (f', {pool_note.split()[-2]}' if pool_note else '') + f', {y % 100}.{m:02d} INDEX)')
 
-def _apply_weekly(res, wk, rt_i):
-    if not rt_i:
-        return
+def _apply_weekly(res, per_rt):
     for tgt_key, cur_attr, put_attr, const_attr in (('var', 'variable_cost', 'indirect_var', 'var_const'), ('fix', 'fixed_cost', 'indirect_fix', 'fix_const')):
-        tgt = wk[tgt_key] / rt_i
+        tgt = per_rt.get(tgt_key)
         cur = getattr(res, cur_attr)
-        if cur is None:
+        if tgt is None or cur is None:
             continue
         d = tgt - cur
         setattr(res, put_attr, (getattr(res, put_attr) or 0) + d)
         setattr(res, const_attr, (getattr(res, const_attr) or 0) + d)
-    if res.ancillary_revenue is not None:
-        d = wk['anc'] / rt_i - res.ancillary_revenue
+    if res.ancillary_revenue is not None and per_rt.get('anc') is not None:
+        d = per_rt['anc'] - res.ancillary_revenue
         res.ancillary_revenue += d
         res.anc_const += d
         if res.total_revenue is not None:
@@ -252,6 +257,7 @@ def main():
     ds, act = (Dataset(), Actuals())
     wk = None if args.no_weekly else Weekly()
     mg = None if args.no_weekly else Mgmt()
+    cb = None if args.no_weekly else CostBook()
     period = Period.parse(args.period)
     ac_hint = ds.resolve_aircraft(args.ac) if args.ac else None
     if args.ac and (not ac_hint):
@@ -262,7 +268,7 @@ def main():
         if not route:
             eprint(f'   ! 노선 인식 실패 : {raw}')
             continue
-        rows = list(month_rows(ds, act, route, period, args.sched, ac_hint, args.fixed_alloc, item=len(blocks), wk=wk, mg=mg))
+        rows = list(month_rows(ds, act, route, period, args.sched, ac_hint, args.fixed_alloc, item=len(blocks), wk=wk, mg=mg, cb=cb))
         blocks.append((route, rows))
         eprint(f'\n■ {route} ({period.label})')
         eprint(f"   {'년월':<8}{'편수':>6}{'L/F':>8}{'A/R':>9}{'총수입':>12}{'총비용':>12}{'영업이익':>12}{'이익률':>8}  근거")

@@ -47,6 +47,7 @@ def status() -> str:
     out = dict(cost=cost.name if cost else None,
                actuals=(APP / "과거실적 DATA.xlsx").exists(),
                calendar=(APP / "공휴일 DATA.xlsx").exists(),
+               costbook=(APP / "비용기준 DATA.xlsx").exists(),
                plan_tabs=[], daily=False)
     if out["actuals"]:
         import openpyxl

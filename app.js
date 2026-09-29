@@ -102,6 +102,7 @@ function renderFiles(files) {
     [info && info.cost, `비용 추정용 파일${info && info.cost ? " : " + info.cost : " (이름에 '비용' 이 든 엑셀)"}`],
     [has("과거실적 DATA.xlsx"), "과거실적 DATA.xlsx"],
     [has("공휴일 DATA.xlsx"), "공휴일 DATA.xlsx (일자 매칭용, 없어도 됨)"],
+    [has("비용기준 DATA.xlsx"), "비용기준 DATA.xlsx (확정·추정 비용, 없어도 됨)"],
   ];
   $("files").innerHTML = items.map(([ok, t]) => `<li class="${ok ? "ok" : "miss"}">${t}</li>`).join("");
   const plan = info && info.plan_tabs && info.plan_tabs.length;
