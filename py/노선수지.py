@@ -164,7 +164,7 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             src += f' · 비용 {ext_label}'
         lf = pax / seats if seats else 0.0
         ar = rev / pax if pax else 0.0
-        cost = anc = 0.0
+        cost = anc = var = 0.0
         results = []
         for code, rt_i, cargo_rt in legs:
             res = eng.compute(Leg(flight_no='', route=route, aircraft=code, round_trips=rt_i, lf=lf, ar=ar, cargo_rt=cargo_rt, rt_source=src))
@@ -174,9 +174,10 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             res.period = mp.label
             results.append(res)
             cost += res.total_cost * rt_i
+            var += (res.variable_cost or 0) * rt_i
             anc += (res.ancillary_revenue or 0) * rt_i
         names = ' + '.join((f"{ds.aircraft[c]['name']}" for c, _, _ in legs))
-        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), cost_src=ext_kind or 'CASK', fx=fx, fuel=fuel, idx_src=idx_src, src=src if wk_scaled else src + ' · 비용 CASK(W26 파일' + (f', {pool_note.split()[-2]}' if pool_note else '') + f', {y % 100}.{m:02d} INDEX)')
+        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, var=var, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), cost_src=ext_kind or 'CASK', fx=fx, fuel=fuel, idx_src=idx_src, src=src if wk_scaled else src + ' · 비용 CASK(W26 파일' + (f', {pool_note.split()[-2]}' if pool_note else '') + f', {y % 100}.{m:02d} INDEX)')
 
 def _apply_weekly(res, per_rt):
     for tgt_key, cur_attr, put_attr, const_attr in (('var', 'variable_cost', 'indirect_var', 'var_const'), ('fix', 'fixed_cost', 'indirect_fix', 'fix_const')):
@@ -300,8 +301,11 @@ def _fill(period, blocks, period_results, monthly_results, route_assumptions, al
         route_assumptions.setdefault(route, []).extend([f'기간 : {period.label}  ·  환율·유가 평균 {fx_r:,.0f}원 / {fu_r:,.1f} USC', '이 시트의 월별 행이 RAW DATA 입니다. 파란 칸(CFG·운항횟수·L/F·A/R)을 고치면 이 시트 합계와 요약 시트가 함께 바뀝니다', "달마다 쓴 값의 출처는 아래 '근거' 를 보세요 (확정실적 = 경영기획 마감치 / 추정실적 = 주차별 보고 / CASK = 비용파일 추정)"] + [f"{d['y'] % 100:02d}.{d['m']:02d} : {d['src']}" for d in got])
     scenarios = [Scenario('실적 기준', results=period_results)]
     monthly = [Scenario('실적 기준', results=monthly_results)]
-COMBI_COLS = [('년월', 10), ('기종', 14), ('운항횟수(왕복)', 12), ('편수(OW)', 10), ('공급석', 10), ('수송석', 10), ('L/F', 8), ('A/R(원)', 10), ('여객수입', 13), ('부대수입', 12), ('화물수입', 12), ('총수입', 13), ('총비용', 13), ('영업이익', 13), ('영업이익률', 10), ('환율(원)', 9), ('유가(USC)', 9), ('근거', 46)]
-MONEY_I = (8, 9, 10, 11, 12)
+COMBI_COLS = [('년월', 10), ('기종', 16), ('CFG', 7), ('운항횟수\n(왕복)', 9), ('편수\n(OW)', 8), ('공급석', 10), ('수송석', 10), ('1왕복수입\nL/F(%)', 9), ('1왕복수입\nA/R(원)', 10), ('1왕복수입\n여객', 12), ('1왕복수입\n부대', 11), ('1왕복수입\n화물', 11), ('1왕복수입\n총수입', 12), ('1왕복수지\n변동비', 12), ('1왕복수지\n총비용', 12), ('1왕복수지\n한계이익', 12), ('1왕복수지\n영업이익', 12), ('1왕복수지\n영업이익률', 10), ('총수지\n총수입', 13), ('총수지\n총비용', 13), ('총수지\n영업이익', 13), ('환율(원)', 9), ('유가(USC)', 9), ('근거', 46)]
+RT_MONEY_I = (9, 10, 11, 12, 13, 14, 15)
+TOT_MONEY_I = (18, 19)
+PROFIT_I = (16, 20)
+PCT_I = (17,)
 
 def _combined_tables(path, jobs, ds):
     from openpyxl import load_workbook
@@ -320,7 +324,7 @@ def _combined_tables(path, jobs, ds):
                 continue
             _text(ws, row, 2, f'■ 월별 수지 (기종 합계) - {period.label}   (금액 : 천원)', F_SUM)
             row += 1
-            ws.row_dimensions[row].height = ROW_H
+            ws.row_dimensions[row].height = 32
             for i, (head, w) in enumerate(COMBI_COLS):
                 c = ws.cell(row, 2 + i, head)
                 c.font, c.fill, c.alignment, c.border = (F_HEAD_W, HEAD_FILL, CENTER, BOX)
@@ -329,23 +333,28 @@ def _combined_tables(path, jobs, ds):
             row += 1
             first = row
             for d in got:
-                p_ = d['total_rev'] - d['cost']
-                vals = [f"{d['y'] % 100}.{d['m']:02d}월", d['ac'], round(d['rt'], 1), d['ow'], round(d['seats']), round(d['pax']), d['lf'], round(d['ar']), round(d['rev']), round(d['anc']), round(d['cargo']), round(d['total_rev']), round(d['cost']), round(p_), p_ / d['total_rev'] if d['total_rev'] else 0, round(d.get('fx') or 0), round(d.get('fuel') or 0, 1), d['src']]
+                vals = _combi_vals(f"{d['y'] % 100}.{d['m']:02d}월", d['ac'], d) + [round(d.get('fx') or 0), round(d.get('fuel') or 0, 1), d['src']]
                 _combi_row(ws, row, vals)
                 row += 1
-            tot_rt = sum((d['rt'] for d in got))
-            tot_seats = sum((d['seats'] for d in got))
-            tot_pax = sum((d['pax'] for d in got))
-            tot_rev = sum((d['rev'] for d in got))
-            trev = sum((d['total_rev'] for d in got))
-            tcost = sum((d['cost'] for d in got))
-            wfx = sum(((d.get('fx') or 0) * d['rt'] for d in got)) / max(tot_rt, 1e-09)
-            wfu = sum(((d.get('fuel') or 0) * d['rt'] for d in got)) / max(tot_rt, 1e-09)
-            vals = ['합계', '', round(tot_rt, 1), sum((d['ow'] for d in got)), round(tot_seats), round(tot_pax), tot_pax / tot_seats if tot_seats else 0, round(tot_rev / tot_pax) if tot_pax else 0, round(tot_rev), round(sum((d['anc'] for d in got))), round(sum((d['cargo'] for d in got))), round(trev), round(tcost), round(trev - tcost), (trev - tcost) / trev if trev else 0, round(wfx), round(wfu, 1), '환율·유가는 운항횟수 가중평균']
+            tot_rt = max(sum((d['rt'] for d in got)), 1e-09)
+            agg_d = {k: sum((d[k] for d in got)) for k in ('rt', 'ow', 'seats', 'pax', 'rev', 'anc', 'cargo', 'total_rev', 'cost', 'var')}
+            agg_d['lf'] = agg_d['pax'] / agg_d['seats'] if agg_d['seats'] else 0
+            agg_d['ar'] = agg_d['rev'] / agg_d['pax'] if agg_d['pax'] else 0
+            wfx = sum(((d.get('fx') or 0) * d['rt'] for d in got)) / tot_rt
+            wfu = sum(((d.get('fuel') or 0) * d['rt'] for d in got)) / tot_rt
+            vals = _combi_vals('합계', '', agg_d) + [round(wfx), round(wfu, 1), '환율·유가는 운항횟수 가중평균']
             _combi_row(ws, row, vals, total=True)
             row += 3
     wb.save(path)
     return path
+
+def _combi_vals(label, ac, d):
+    rt = max(d['rt'], 1e-09)
+    ow = d['ow']
+    per = lambda k: d[k] / rt
+    margin = d['total_rev'] - d['var']
+    profit = d['total_rev'] - d['cost']
+    return [label, ac, round(d['seats'] / ow) if ow else 0, round(d['rt'], 1), round(ow), round(d['seats']), round(d['pax']), d['lf'], round(d['ar']), round(per('rev')), round(per('anc')), round(per('cargo')), round(per('total_rev')), round(per('var')), round(per('cost')), round(margin / rt), round(profit / rt), profit / d['total_rev'] if d['total_rev'] else 0, round(d['total_rev']), round(d['cost']), round(profit)]
 
 def _combi_row(ws, row, vals, total: bool=False):
     ws.row_dimensions[row].height = ROW_H
@@ -356,17 +365,17 @@ def _combi_row(ws, row, vals, total: bool=False):
         if total:
             c.fill = HEAD_FILL
             c.font = F_HEAD_W
-        if i == 6:
+        if i == 7:
             c.number_format = '#,##0.0%'
-        elif i == 14:
+        elif i in PCT_I:
             c.number_format = '#,##0.0%' if total else PCT
-        elif i == 13:
+        elif i in PROFIT_I:
             c.number_format = MONEY_K if total else PL_K
-        elif i in MONEY_I:
+        elif i in RT_MONEY_I or i in TOT_MONEY_I:
             c.number_format = MONEY_K
-        elif i in (2, 16):
+        elif i in (3, 22):
             c.number_format = '#,##0.0'
-        elif i >= 3 and isinstance(v, (int, float)):
+        elif i >= 2 and isinstance(v, (int, float)):
             c.number_format = '#,##0'
 
 def build_report(path, jobs, alloc, ds, sched, mg=None, wk=None):
