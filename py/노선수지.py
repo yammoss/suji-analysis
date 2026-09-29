@@ -8,7 +8,8 @@ from profit_tool.dataset import Dataset
 from profit_tool.engine import Engine, Leg, Scenario
 from profit_tool.period import Period
 from profit_tool.plan27 import Plan
-from profit_tool.report import build_narrative, write_excel
+from openpyxl.utils import get_column_letter as L
+from profit_tool.report import BOX, CENTER, F_BODY, F_HEAD_W, F_SUM, HEAD_FILL, LEFT, ROW_H, _sheet_name, _text, build_narrative, write_excel
 from profit_tool.schedule import month_spans, parse_schedule
 from profit_tool.costbook import CostBook
 from profit_tool.mgmt import Mgmt
@@ -149,6 +150,11 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             legs = [(code, rt, cargo.per_round_trip)]
             cargo_tot = cargo.per_round_trip * rt
             src = f'{pl.short} 목표·사업량' if plan_lf and plan_ar and sched_note.startswith(pl.short) else lf_src + f' · {sched_note}'
+        fx, fuel, idx_src = (eng.fx, eng.fuel, f'{y % 100}.{m:02d} INDEX')
+        if ext_kind == '추정' and wk is not None and wk.available:
+            srcw = wk.source(y, m)
+            if srcw.get('fx'):
+                fx, fuel, idx_src = (srcw['fx'], srcw.get('fuel') or fuel, srcw.get('label', idx_src))
         if ext_row and ext_row.get('rt'):
             wk_scaled = {a2: (ext_row.get(a2) or 0) / ext_row['rt'] for a2 in ('var', 'fix', 'anc')}
             src += f' · 비용 {ext_label}'
@@ -166,7 +172,7 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             cost += res.total_cost * rt_i
             anc += (res.ancillary_revenue or 0) * rt_i
         names = ' + '.join((f"{ds.aircraft[c]['name']}" for c, _, _ in legs))
-        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), cost_src=ext_kind or 'CASK', src=src if wk_scaled else src + ' · 비용 CASK(W26 파일' + (f', {pool_note.split()[-2]}' if pool_note else '') + f', {y % 100}.{m:02d} INDEX)')
+        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), cost_src=ext_kind or 'CASK', fx=fx, fuel=fuel, idx_src=idx_src, src=src if wk_scaled else src + ' · 비용 CASK(W26 파일' + (f', {pool_note.split()[-2]}' if pool_note else '') + f', {y % 100}.{m:02d} INDEX)')
 
 def _apply_weekly(res, per_rt):
     for tgt_key, cur_attr, put_attr, const_attr in (('var', 'variable_cost', 'indirect_var', 'var_const'), ('fix', 'fixed_cost', 'indirect_fix', 'fix_const')):
@@ -284,9 +290,73 @@ def _fill(period, blocks, period_results, monthly_results, route_assumptions, al
         res.item = item
         res.period = period.label
         period_results.append(res)
-        route_assumptions.setdefault(route, []).extend([f'기간 : {period.label}', '이 시트의 월별 행이 RAW DATA 입니다. 파란 칸(CFG·운항횟수·L/F·A/R)을 고치면 이 시트 합계와 요약 시트가 함께 바뀝니다', "달마다 쓴 값의 출처는 아래 '근거' 를 보세요 (확정실적 = 경영기획 마감치 / 추정실적 = 주차별 보고 / CASK = 비용파일 추정)"] + [f"{d['y'] % 100:02d}.{d['m']:02d} : {d['src']}" for d in got])
+        rt_r = sum((d['rt'] for d in got)) or 1e-09
+        fx_r = sum(((d.get('fx') or 0) * d['rt'] for d in got)) / rt_r
+        fu_r = sum(((d.get('fuel') or 0) * d['rt'] for d in got)) / rt_r
+        route_assumptions.setdefault(route, []).extend([f'기간 : {period.label}  ·  환율·유가 평균 {fx_r:,.0f}원 / {fu_r:,.1f} USC', '이 시트의 월별 행이 RAW DATA 입니다. 파란 칸(CFG·운항횟수·L/F·A/R)을 고치면 이 시트 합계와 요약 시트가 함께 바뀝니다', "달마다 쓴 값의 출처는 아래 '근거' 를 보세요 (확정실적 = 경영기획 마감치 / 추정실적 = 주차별 보고 / CASK = 비용파일 추정)"] + [f"{d['y'] % 100:02d}.{d['m']:02d} : {d['src']}" for d in got])
     scenarios = [Scenario('실적 기준', results=period_results)]
     monthly = [Scenario('실적 기준', results=monthly_results)]
+COMBI_COLS = [('년월', 10), ('기종', 14), ('운항횟수(왕복)', 12), ('편수(OW)', 10), ('공급석', 10), ('수송석', 10), ('L/F', 8), ('A/R', 10), ('여객수입', 13), ('부대수입', 12), ('화물수입', 12), ('총수입', 13), ('총비용', 13), ('영업이익', 13), ('영업이익률', 10), ('환율(원)', 9), ('유가(USC)', 9), ('근거', 46)]
+
+def _combined_tables(path, jobs, ds):
+    from openpyxl import load_workbook
+    wb = load_workbook(path)
+    used = set(wb.sheetnames)
+    for route in dict.fromkeys((r for _, blocks in jobs for r, _ in blocks)):
+        name = next((n for n in wb.sheetnames if n == _sheet_name(route, set())), None)
+        if name is None:
+            continue
+        ws = wb[name]
+        row = ws.max_row + 2
+        for period, blocks in jobs:
+            rows = next((rs for r, rs in blocks if r == route), [])
+            got = [d for d in rows if not d['empty']]
+            if not got:
+                continue
+            _text(ws, row, 2, f'■ 월별 수지 (기종 합계) - {period.label}', F_SUM)
+            row += 1
+            ws.row_dimensions[row].height = ROW_H
+            for i, (head, w) in enumerate(COMBI_COLS):
+                c = ws.cell(row, 2 + i, head)
+                c.font, c.fill, c.alignment, c.border = (F_HEAD_W, HEAD_FILL, CENTER, BOX)
+                if ws.column_dimensions[L(2 + i)].width in (None, 0):
+                    ws.column_dimensions[L(2 + i)].width = w
+            row += 1
+            first = row
+            for d in got:
+                p_ = d['total_rev'] - d['cost']
+                vals = [f"{d['y'] % 100}.{d['m']:02d}월", d['ac'], round(d['rt'], 1), d['ow'], round(d['seats']), round(d['pax']), d['lf'], round(d['ar']), round(d['rev']), round(d['anc']), round(d['cargo']), round(d['total_rev']), round(d['cost']), round(p_), p_ / d['total_rev'] if d['total_rev'] else 0, round(d.get('fx') or 0), round(d.get('fuel') or 0, 1), d['src']]
+                _combi_row(ws, row, vals)
+                row += 1
+            tot_rt = sum((d['rt'] for d in got))
+            tot_seats = sum((d['seats'] for d in got))
+            tot_pax = sum((d['pax'] for d in got))
+            tot_rev = sum((d['rev'] for d in got))
+            trev = sum((d['total_rev'] for d in got))
+            tcost = sum((d['cost'] for d in got))
+            wfx = sum(((d.get('fx') or 0) * d['rt'] for d in got)) / max(tot_rt, 1e-09)
+            wfu = sum(((d.get('fuel') or 0) * d['rt'] for d in got)) / max(tot_rt, 1e-09)
+            vals = ['합계', '', round(tot_rt, 1), sum((d['ow'] for d in got)), round(tot_seats), round(tot_pax), tot_pax / tot_seats if tot_seats else 0, round(tot_rev / tot_pax) if tot_pax else 0, round(tot_rev), round(sum((d['anc'] for d in got))), round(sum((d['cargo'] for d in got))), round(trev), round(tcost), round(trev - tcost), (trev - tcost) / trev if trev else 0, round(wfx), round(wfu, 1), '환율·유가는 운항횟수 가중평균']
+            _combi_row(ws, row, vals, total=True)
+            row += 3
+    wb.save(path)
+    return path
+
+def _combi_row(ws, row, vals, total: bool=False):
+    ws.row_dimensions[row].height = ROW_H
+    for i, v in enumerate(vals):
+        c = ws.cell(row, 2 + i, v)
+        c.font = F_SUM if total else F_BODY
+        c.border, c.alignment = (BOX, LEFT if i == len(vals) - 1 else CENTER)
+        if total:
+            c.fill = HEAD_FILL
+            c.font = F_HEAD_W
+        if i in (6, 14):
+            c.number_format = '#,##0.0%'
+        elif i in (2, 16):
+            c.number_format = '#,##0.0'
+        elif i >= 3 and isinstance(v, (int, float)):
+            c.number_format = '#,##0'
 
 def build_report(path, jobs, alloc, ds, sched, mg=None, wk=None):
     live = [d for _, blocks in jobs for _, rows in blocks for d in rows if not d['empty']]
@@ -302,12 +372,18 @@ def build_report(path, jobs, alloc, ds, sched, mg=None, wk=None):
     labels = ' · '.join((pp.label for pp, _ in jobs))
     ext = _month_ranges(live, '확정') or _month_ranges(live, '추정')
     assumptions = [f'기간 : {labels}'] + _cost_lines(live, alloc, mg, wk) + ['수입 : 확정·추정 달은 그 파일의 운송·부대·화물수입, 나머지 달은 과거실적 DATA 의 실제 운송·화물수입 (부대수입은 대노선별 RASK 기준 추정)', '운항횟수 : 확정·추정 달은 그 파일 편수, 나머지 달은 과거실적 DATA 의 실제 편수' + ('(실적이 없으면 확정 스케줄' + (f' · {sched}' if sched else '') + ')'), "조건 : 비교 없이 노선 자체의 월별 수지 · 달마다 쓴 값의 출처는 노선 시트 '근거' 에 적혀 있습니다"]
+    rt_all = sum((d['rt'] for d in live))
+    if rt_all:
+        fx = sum(((d.get('fx') or 0) * d['rt'] for d in live)) / rt_all
+        fu = sum(((d.get('fuel') or 0) * d['rt'] for d in live)) / rt_all
+        assumptions.insert(1, f"비용 : 환율·유가 기간 평균 {fx:,.0f}원 / {fu:,.1f} USC (운항횟수 가중평균 · 달별 값은 노선 시트 '기종 합계' 표)")
     if season_fallback:
         assumptions.append('배부단가 : 대상 기간이 비용파일 시즌(W26) 밖이라 시즌 평균 배부단가를 대신 썼습니다 (환율·유가는 해당 월 INDEX 그대로)')
     if pool_fix:
         assumptions.append('고정비 POOL 이 일부 기간치뿐인 달(시즌 시작 월)은 배부단가만 가장 가까운 정상 달 것을 썼습니다 - 그대로 두면 고정비가 1/4 수준으로 빠집니다')
     narrative = build_narrative(scenarios, assumptions)
-    return write_excel(path, f'노선 수지 ({labels})', scenarios, assumptions, narrative, monthly=monthly, route_assumptions=route_assumptions, period_label=labels)
+    out = write_excel(path, f'노선 수지 ({labels})', scenarios, assumptions, narrative, monthly=monthly, route_assumptions=route_assumptions, period_label=labels)
+    return _combined_tables(out, jobs, ds)
 
 def main():
     ap = argparse.ArgumentParser(description='노선 수지 (비교 없이 한 노선의 월별 손익)')
