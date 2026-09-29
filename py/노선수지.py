@@ -48,24 +48,31 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
         full_month = lo.day == 1 and (hi + timedelta(days=1)).month != m
         if mix and (part or (agg and agg[0] > 0 and full_month)):
             clipped = part and (not full_month or part[5] < hi)
+            month_fc = {a: v[1] for a, v in mix.items()}
             if clipped:
                 fc_tot, seats, pax, rev, d0, d1 = part
-                share = fc_tot / max(sum((v[1] for v in mix.values())), 1e-09)
-                src = f'{d0:%y.%m.%d}~{d1:%m.%d} 실적' + (' (월 미완 - 그날까지)' if full_month else '')
+                span_fc = act.capacity_span_ac(route, lo, hi) or month_fc
+                share = fc_tot / max(sum(month_fc.values()), 1e-09)
+                last = act.day_range[1] if act.day_range else d1
+                running = full_month and (y, m) == (last.year, last.month)
+                src = f'{d0:%y.%m.%d}~{d1:%m.%d} 실적' + (' (월 미완 - 그날까지)' if running else ' (운항일 기준)')
             else:
                 seats, pax, rev = agg
-                fc_tot, share = (sum((v[1] for v in mix.values())), 1.0)
+                fc_tot, share, span_fc = (sum(month_fc.values()), 1.0, month_fc)
                 src = f'{y % 100}.{m:02d}월 실적'
             rt = fc_tot / 2
             cargo_tot = sum((v[0] for v in mix.values())) * share
             legs = []
-            for name, (cargo, fc) in mix.items():
+            tot_fc = max(sum(span_fc.values()), 1e-09)
+            for name, fc in span_fc.items():
                 code = next((c for c, d in ds.aircraft.items() if d['name'] == name), None)
                 if code is None:
                     continue
-                w = fc / max(sum((v[1] for v in mix.values())), 1e-09)
-                rt_i = rt * w
-                legs.append((code, rt_i, cargo * share / max(rt_i, 1e-09)))
+                rt_i = rt * fc / tot_fc
+                cargo_ac = mix.get(name, [0.0, 0.0])[0] * (fc / max(month_fc.get(name) or fc, 1e-09))
+                legs.append((code, rt_i, cargo_ac / max(rt_i, 1e-09)))
+            if not legs:
+                legs = [(_main_ac(act, ds, route), rt, 0.0)]
         elif ext_row and ext_row.get('rt'):
             span_fc, _ = act.capacity_span(route, lo, hi)
             month_fc, _ = act.capacity_span(route, lo.replace(day=1), (lo.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
@@ -121,6 +128,7 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             if wk_scaled:
                 _apply_weekly(res, wk_scaled)
             res.item = item
+            res.period = mp.label
             results.append(res)
             cost += res.total_cost * rt_i
             anc += (res.ancillary_revenue or 0) * rt_i

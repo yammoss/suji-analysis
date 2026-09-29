@@ -132,6 +132,7 @@ class Actuals:
         self.raw_label = ''
         self._cap: dict = {}
         self._cap_day: dict = {}
+        self._cap_day_ac: dict = {}
         if not self.available:
             return
         wb = openpyxl.load_workbook(self.path, read_only=True, data_only=True)
@@ -164,6 +165,8 @@ class Actuals:
         for key, v in data['agg_dow'].items():
             if (key[0], key[1], key[2]) in flown:
                 self._agg_dow[key] = list(v)
+        for (route, d, ac), v in data.get('day_ac', {}).items():
+            self._cap_day_ac.setdefault(route, {}).setdefault(d, {})[ac] = list(v)
         for route, days in data['day'].items():
             store = self._day.setdefault(route, {})
             cap = self._cap_day.setdefault(route, {})
@@ -178,6 +181,14 @@ class Actuals:
         days = self._cap_day.get(route) or {}
         got = [v for d, v in days.items() if lo <= d <= hi and v[1] > 0]
         return (sum((v[0] for v in got)), sum((v[1] for v in got))) if got else (0.0, 0.0)
+
+    def capacity_span_ac(self, route: str, lo: date, hi: date) -> dict:
+        out: dict[str, float] = {}
+        for d, per_ac in (self._cap_day_ac.get(route) or {}).items():
+            if lo <= d <= hi:
+                for ac, (fc, _) in per_ac.items():
+                    out[ac] = out.get(ac, 0.0) + fc
+        return {a: v for a, v in out.items() if v}
 
     def capacity(self, route: str, y: int, m: int) -> dict:
         return {ac: list(v) for (r, ac, yy, mm), v in getattr(self, '_cap', {}).items() if r == route and yy == y and (mm == m) and v[0]}
