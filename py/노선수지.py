@@ -7,6 +7,7 @@ from profit_tool.actuals import Actuals
 from profit_tool.dataset import Dataset
 from profit_tool.engine import Engine, Leg, Scenario
 from profit_tool.period import Period
+from profit_tool.plan27 import Plan
 from profit_tool.report import build_narrative, write_excel
 from profit_tool.schedule import month_spans, parse_schedule
 from profit_tool.costbook import CostBook
@@ -18,7 +19,7 @@ EOK = 100000000
 def eprint(*a):
     print(*a, file=sys.stderr)
 
-def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, mg=None, cb=None):
+def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, mg=None, cb=None, pl=None):
     for lo, hi in month_spans(period):
         y, m = (lo.year, lo.month)
         mp = Period.parse(f'{y % 100}.{m:02d}')
@@ -104,6 +105,13 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
                 whole = (lo.replace(day=28) + timedelta(days=4)).replace(day=1) - lo.replace(day=1)
                 rt = plan['rt'] * (days / max(whole.days, 1))
                 sched_note = '확정 스케줄'
+            elif pl is not None and pl.available and pl.volume(route, y, m):
+                fleet = pl.fleet(route, y, m)
+                days = (hi - lo).days + 1
+                whole = ((lo.replace(day=28) + timedelta(days=4)).replace(day=1) - lo.replace(day=1)).days
+                rt = sum(fleet.values()) / 2 * (days / max(whole, 1))
+                ac_seg = ds.resolve_aircraft(max(fleet, key=fleet.get))
+                sched_note = f'{pl.short} 사업량'
             elif sched:
                 span = Period.parse(f'{lo:%y.%m.%d}~{hi:%y.%m.%d}')
                 r = parse_schedule(sched, span)
@@ -121,19 +129,26 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
                 whole = ((lo.replace(day=28) + timedelta(days=4)).replace(day=1) - lo.replace(day=1)).days
                 rt = seg / 2 * (days / max(whole, 1))
                 sched_note = 'W26 파일 사업량'
+            plan_lf = plan_ar = None
+            if pl is not None and pl.available:
+                plan_lf, plan_ar = pl.rate(route, y, m)
             a = act.for_period(route, mp, years_back=1, use_plan=True)
-            if a is None:
+            if a is None and (not (plan_lf and plan_ar)):
                 yield dict(y=y, m=m, empty=True, src='L/F·A/R 실적·계획 없음')
                 continue
             mixc = act.capacity(route, y, m)
             code = ac_hint or (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixc, key=lambda k2: mixc[k2][0])), None) if mixc else None) or (ac_seg if sched_note == 'W26 파일 사업량' and ac_seg else None) or _main_ac(act, ds, route)
             cargo = act.cargo_revenue(route, ds.aircraft[code]['name'], mp, years_back=1)
             seats = ds.seats(code) * rt * 2
-            pax = seats * a.lf
-            rev = pax * a.ar
+            if plan_lf and plan_ar:
+                lf_src = f'{pl.short} 목표'
+                pax, rev = (seats * plan_lf, seats * plan_lf * plan_ar)
+            else:
+                lf_src = a.source_label
+                pax, rev = (seats * a.lf, seats * a.lf * a.ar)
             legs = [(code, rt, cargo.per_round_trip)]
             cargo_tot = cargo.per_round_trip * rt
-            src = a.source_label + f' · {sched_note}'
+            src = f'{pl.short} 목표·사업량' if plan_lf and plan_ar and sched_note.startswith(pl.short) else lf_src + f' · {sched_note}'
         if ext_row and ext_row.get('rt'):
             wk_scaled = {a2: (ext_row.get(a2) or 0) / ext_row['rt'] for a2 in ('var', 'fix', 'anc')}
             src += f' · 비용 {ext_label}'
@@ -308,6 +323,7 @@ def main():
     wk = None if args.no_weekly else Weekly()
     mg = None if args.no_weekly else Mgmt()
     cb = None if args.no_weekly else CostBook()
+    pl = Plan()
     labels = [x for raw in args.period for x in str(raw).split(',') if x.strip()]
     periods = []
     for lab in labels[:2]:
@@ -328,7 +344,7 @@ def main():
             if not route:
                 eprint(f'   ! 노선 인식 실패 : {raw}')
                 continue
-            rows = list(month_rows(ds, act, route, period, args.sched, ac_hint, args.fixed_alloc, item=len(blocks), wk=wk, mg=mg, cb=cb))
+            rows = list(month_rows(ds, act, route, period, args.sched, ac_hint, args.fixed_alloc, item=len(blocks), wk=wk, mg=mg, cb=cb, pl=pl))
             blocks.append((route, rows))
             eprint(f'\n■ {route} ({period.label})')
             eprint(f"   {'년월':<8}{'편수':>6}{'L/F':>8}{'A/R':>9}{'총수입':>12}{'총비용':>12}{'영업이익':>12}{'이익률':>8}  근거")
