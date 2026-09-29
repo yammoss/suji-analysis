@@ -9,7 +9,7 @@ from profit_tool.engine import Engine, Leg, Scenario
 from profit_tool.period import Period
 from profit_tool.plan27 import Plan
 from openpyxl.utils import get_column_letter as L
-from profit_tool.report import BOX, CENTER, F_BODY, F_HEAD_W, F_SUM, HEAD_FILL, LEFT, ROW_H, _sheet_name, _text, build_narrative, write_excel
+from profit_tool.report import BOX, CENTER, F_BODY, F_HEAD_W, F_SUM, HEAD_FILL, LEFT, MONEY_K, PCT, PL_K, ROW_H, _sheet_name, _text, build_narrative, write_excel
 from profit_tool.schedule import month_spans, parse_schedule
 from profit_tool.costbook import CostBook
 from profit_tool.mgmt import Mgmt
@@ -296,7 +296,8 @@ def _fill(period, blocks, period_results, monthly_results, route_assumptions, al
         route_assumptions.setdefault(route, []).extend([f'기간 : {period.label}  ·  환율·유가 평균 {fx_r:,.0f}원 / {fu_r:,.1f} USC', '이 시트의 월별 행이 RAW DATA 입니다. 파란 칸(CFG·운항횟수·L/F·A/R)을 고치면 이 시트 합계와 요약 시트가 함께 바뀝니다', "달마다 쓴 값의 출처는 아래 '근거' 를 보세요 (확정실적 = 경영기획 마감치 / 추정실적 = 주차별 보고 / CASK = 비용파일 추정)"] + [f"{d['y'] % 100:02d}.{d['m']:02d} : {d['src']}" for d in got])
     scenarios = [Scenario('실적 기준', results=period_results)]
     monthly = [Scenario('실적 기준', results=monthly_results)]
-COMBI_COLS = [('년월', 10), ('기종', 14), ('운항횟수(왕복)', 12), ('편수(OW)', 10), ('공급석', 10), ('수송석', 10), ('L/F', 8), ('A/R', 10), ('여객수입', 13), ('부대수입', 12), ('화물수입', 12), ('총수입', 13), ('총비용', 13), ('영업이익', 13), ('영업이익률', 10), ('환율(원)', 9), ('유가(USC)', 9), ('근거', 46)]
+COMBI_COLS = [('년월', 10), ('기종', 14), ('운항횟수(왕복)', 12), ('편수(OW)', 10), ('공급석', 10), ('수송석', 10), ('L/F', 8), ('A/R(원)', 10), ('여객수입', 13), ('부대수입', 12), ('화물수입', 12), ('총수입', 13), ('총비용', 13), ('영업이익', 13), ('영업이익률', 10), ('환율(원)', 9), ('유가(USC)', 9), ('근거', 46)]
+MONEY_I = (8, 9, 10, 11, 12)
 
 def _combined_tables(path, jobs, ds):
     from openpyxl import load_workbook
@@ -313,14 +314,14 @@ def _combined_tables(path, jobs, ds):
             got = [d for d in rows if not d['empty']]
             if not got:
                 continue
-            _text(ws, row, 2, f'■ 월별 수지 (기종 합계) - {period.label}', F_SUM)
+            _text(ws, row, 2, f'■ 월별 수지 (기종 합계) - {period.label}   (금액 : 천원)', F_SUM)
             row += 1
             ws.row_dimensions[row].height = ROW_H
             for i, (head, w) in enumerate(COMBI_COLS):
                 c = ws.cell(row, 2 + i, head)
                 c.font, c.fill, c.alignment, c.border = (F_HEAD_W, HEAD_FILL, CENTER, BOX)
-                if ws.column_dimensions[L(2 + i)].width in (None, 0):
-                    ws.column_dimensions[L(2 + i)].width = w
+                cur_w = ws.column_dimensions[L(2 + i)].width or 0
+                ws.column_dimensions[L(2 + i)].width = max(cur_w, w)
             row += 1
             first = row
             for d in got:
@@ -351,8 +352,14 @@ def _combi_row(ws, row, vals, total: bool=False):
         if total:
             c.fill = HEAD_FILL
             c.font = F_HEAD_W
-        if i in (6, 14):
+        if i == 6:
             c.number_format = '#,##0.0%'
+        elif i == 14:
+            c.number_format = '#,##0.0%' if total else PCT
+        elif i == 13:
+            c.number_format = MONEY_K if total else PL_K
+        elif i in MONEY_I:
+            c.number_format = MONEY_K
         elif i in (2, 16):
             c.number_format = '#,##0.0'
         elif i >= 3 and isinstance(v, (int, float)):
