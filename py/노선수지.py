@@ -48,6 +48,10 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
                 ext_label = f'{ext_kind}실적({cb.label_of(y, m)})'
         part = _daily_span(act, route, lo, hi)
         full_month = lo.day == 1 and (hi + timedelta(days=1)).month != m
+        last_flown = act.day_range[1] if act.day_range else None
+        running = bool(full_month and part and last_flown and ((y, m) == (last_flown.year, last_flown.month)) and (part[5] < hi))
+        if running and ext_row and ext_row.get('rt'):
+            part, mix = (None, {})
         if mix and (part or (agg and agg[0] > 0 and full_month)):
             clipped = part and (not full_month or part[5] < hi)
             month_fc = {a: v[1] for a, v in mix.items()}
