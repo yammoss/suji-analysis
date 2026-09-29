@@ -22,6 +22,7 @@ def parse_ym(text: str, base: tuple[int, int] | None=None) -> tuple[int, int]:
         raise ValueError(f"월 범위 오류: '{text}'")
     return (y if y > 100 else 2000 + y, mm)
 SEASON_RE = re.compile("^([SW])\\s*'?(\\d{2}|\\d{4})$", re.I)
+YEAR_RE = re.compile("^'?(\\d{2}|\\d{4})\\s*년?$")
 
 def _last_sunday(year: int, month: int):
     d = date(year, month, calendar.monthrange(year, month)[1])
@@ -75,6 +76,11 @@ class Period:
     @classmethod
     def parse(cls, text: str) -> 'Period':
         raw = str(text).strip()
+        yr = YEAR_RE.match(raw)
+        if yr:
+            y = int(yr.group(1))
+            y = y if y > 100 else 2000 + y
+            return cls(month_range((y, 1), (y, 12)), f'{y % 100}년')
         sea = parse_season(raw)
         if sea:
             a, b = sea

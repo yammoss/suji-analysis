@@ -534,7 +534,9 @@ renderCards();
 $("run-route").onclick = () => {
   const routes = $("rt-routes").value.split(/[,\s/]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
   if (!routes.length) return setStatus("노선을 입력하세요");
-  const periods = ($("rt-period").value.trim() || "S26").split(/[,\s]+/).filter(Boolean).slice(0, 2);
+  // 기간 안에 공백이 있을 수 있어(26년 1월~27년 3월) 쉼표로만 나눈다
+  const periods = ($("rt-period").value.trim() || "S26").split(",").map((x) => x.trim())
+    .filter(Boolean).slice(0, 2);
   const argv = [...routes, "--period", ...periods,
     "--fixed-alloc", document.querySelector("input[name=rtalloc]:checked").value];
   const sched = $("rt-sched").value.trim(), ac = $("rt-ac").value.trim();
