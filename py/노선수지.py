@@ -144,14 +144,27 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             mixc = act.capacity(route, y, m)
             code = ac_hint or (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixc, key=lambda k2: mixc[k2][0])), None) if mixc else None) or (ac_seg if sched_note == 'W26 파일 사업량' and ac_seg else None) or _main_ac(act, ds, route)
             cargo = act.cargo_revenue(route, ds.aircraft[code]['name'], mp, years_back=1)
-            seats = ds.seats(code) * rt * 2
+            span_ac = act.capacity_span_ac(route, lo, hi) or {} if cap_fc else {}
+            mix_legs = []
+            if not ac_hint and len(span_ac) > 1:
+                tot_fc = max(sum(span_ac.values()), 1e-09)
+                for name, fc in span_ac.items():
+                    c2 = next((c for c, d in ds.aircraft.items() if d['name'] == name), None)
+                    if c2 is not None:
+                        mix_legs.append((c2, rt * fc / tot_fc))
+            if len(mix_legs) > 1:
+                seats = sum((ds.seats(c2) * r2 * 2 for c2, r2 in mix_legs))
+                sched_note += ' (기종 ' + '+'.join((f"{ds.aircraft[c2]['name']} {r2:.0f}왕복" for c2, r2 in mix_legs)) + ')'
+            else:
+                mix_legs = [(code, rt)]
+                seats = ds.seats(code) * rt * 2
             if plan_lf and plan_ar:
                 lf_src = f'{pl.short} 목표'
                 pax, rev = (seats * plan_lf, seats * plan_lf * plan_ar)
             else:
                 lf_src = a.source_label
                 pax, rev = (seats * a.lf, seats * a.lf * a.ar)
-            legs = [(code, rt, cargo.per_round_trip)]
+            legs = [(c2, r2, cargo.per_round_trip) for c2, r2 in mix_legs]
             cargo_tot = cargo.per_round_trip * rt
             src = f'{pl.short} 목표·사업량' if plan_lf and plan_ar and sched_note.startswith(pl.short) else lf_src + f' · {sched_note}'
         fx, fuel, idx_src = (eng.fx, eng.fuel, f'{y % 100}.{m:02d} INDEX')
