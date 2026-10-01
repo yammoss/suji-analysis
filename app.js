@@ -339,6 +339,7 @@ function schedText(side) {
 
 function genForm() {
   const lines = [], errors = [];
+  const altCounts = [];
   cards.forEach((c, i) => {
     const n = i + 1, r = c.route.trim().toUpperCase().replace(/\s+/g, ""), r2 = c.route2.trim().toUpperCase().replace(/\s+/g, "");
     const A = c.a.ac.trim().toUpperCase(), B = c.b.ac.trim().toUpperCase();
@@ -353,12 +354,18 @@ function genForm() {
         if (!/^\d{1,2}[./]\d{1,2}$/.test(p.until.trim())) errors.push(`비교 ${n} ${label} : 구간 끝 날짜를 12/18 처럼 적으세요`);
       });
     const sa = schedText(c.a), sb = schedText(c.b);
-    if (c.type === "ac") lines.push(`${r} ${A} ${sa} vs ${B} ${sa}`);
+    // 변경(안) 기종을 'A333, A332, A339' 처럼 여러 개 적으면 안마다 따로 비교 (변경1·2·3(안))
+    const Bs = B.split(/[\s,/]+/).filter(Boolean);
+    const alt = (sched) => Bs.map((b) => `${b} ${sched}`.trim()).join(" or ");
+    if (Bs.length > 1 && (c.type === "ac" || c.type === "both")) altCounts.push(Bs.length);
+    if (c.type === "ac") lines.push(`${r} ${A} ${sa} vs ${alt(sa)}`);
     else if (c.type === "sc") lines.push(`${r} ${A} ${sa} vs ${A} ${sb}`);
-    else if (c.type === "both") lines.push(`${r} ${A} ${sa} vs ${B} ${sb}`);
+    else if (c.type === "both") lines.push(`${r} ${A} ${sa} vs ${alt(sb)}`);
     else if (c.type === "cut") lines.push(`${r} ${A} ${sa} vs 비운항`);
     else lines.push(`${r} ${A} ${sa} + ${r2} ${B} ${sb} vs ${r} ${B} ${sa} + ${r2} ${A} ${sb}`);
   });
+  if (altCounts.length && (new Set(altCounts).size > 1 || altCounts.length < lines.length))
+    errors.push("변경(안) 기종을 여러 개 적을 때는 모든 비교의 개수를 같게 하세요 (보통 비교 1건)");
   return { lines, errors };
 }
 
@@ -423,7 +430,7 @@ function sideBox(c, key, title, opts) {
     box.insertAdjacentHTML("beforeend", `<div class="locked">기종 : 기존(안)과 같음 (${esc(c.a.ac || "-")})</div>`);
   } else {
     const l = document.createElement("label");
-    l.innerHTML = `기종 <input type="text" size="10" list="ac-list" placeholder="B738">`;
+    l.innerHTML = `기종 <input type="text" size="${key === "b" ? 20 : 10}" list="ac-list" placeholder="${key === "b" && (c.type === "ac" || c.type === "both") ? "A333 (여러 개: A333, A339)" : "B738"}">`;
     const inp = l.querySelector("input");
     inp.value = side.ac;
     inp.oninput = () => { side.ac = inp.value; if (key === "a") syncLocked(box.parentElement, c); renderGen(); };
@@ -505,6 +512,8 @@ function renderCards() {
     el.appendChild(sides);
     if (c.type === "swap")
       el.insertAdjacentHTML("beforeend", `<p class="muted">변경(안)은 두 노선의 기종을 서로 바꾸고, 스케줄은 각 노선 그대로 둡니다.</p>`);
+    if (c.type === "ac" || c.type === "both")
+      el.insertAdjacentHTML("beforeend", `<p class="muted">변경(안) 기종을 <code>A333, A332, A339</code> 처럼 여러 개 적으면 변경1·2·3(안)으로 한 번에 비교합니다.</p>`);
     wrap.appendChild(el);
   });
   renderGen();

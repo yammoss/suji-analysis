@@ -17,7 +17,7 @@ from profit_tool.booking import Bookings, pickup_rate
 from profit_tool.daymatch import DAY_NAMES, HolidayCalendar, season_offset
 from profit_tool.dataset import Dataset
 from profit_tool.engine import Engine, Leg, Scenario, scenario_adjustment
-from profit_tool.parser import ParsedRow, parse, pop_by_aircraft, pop_grid, pop_monthly, pop_period
+from profit_tool.parser import ParsedRow, parse, pop_by_aircraft, pop_grid, pop_monthly, pop_period, split_alternatives
 from profit_tool.period import Period
 from profit_tool.report import build_narrative, sens_missing_note, sens_tot, sens_var, write_excel, write_sensitivity
 from profit_tool.schedule import parse_schedule, weekdays_of, month_weekdays, month_spans
@@ -28,6 +28,23 @@ def eprint(*a):
 
 def fmt(v, w=15):
     return '-'.rjust(w) if v is None else f'{v:,.0f}'.rjust(w)
+SIDES = {'before': '기존(안)', 'after': '변경(안)'}
+
+def side_label(sec: str) -> str:
+    return SIDES.get(sec, sec)
+
+def set_alternatives(n: int):
+    SIDES.clear()
+    SIDES['before'] = '기존(안)'
+    if n <= 1:
+        SIDES['after'] = '변경(안)'
+        return
+    for k in range(n):
+        SIDES['after' if k == 0 else f'after{k + 1}'] = f'변경{k + 1}(안)'
+
+def side_order(sec: str) -> int:
+    keys = list(SIDES)
+    return keys.index(sec) if sec in keys else 99
 
 @dataclass
 class Entry:
@@ -270,7 +287,7 @@ def fill_inputs(ds: Dataset, entries: list[Entry], engines: dict, override_rt: f
             say(f"   {tag:<34} {'미산출':>9}   {e.rt_src}" + (f'   (참고: W26 사업량 {hint:,.0f}왕복)' if hint else ''))
         else:
             say(f'   {tag:<34} {e.rt:>7,.0f}왕복   ({e.rt_src})')
-            rt_slot(e).setdefault('기존(안)' if e.scenario == 'before' else '변경(안)', []).append((e.aircraft, e.rt_src))
+            rt_slot(e).setdefault(side_label(e.scenario), []).append((e.aircraft, e.rt_src))
     dow_note = ' · 요일(D1346 등) 지정 시 그 요일 편 실적' if act.has_dow else ''
     cal, day_k = (None, None)
     if daily_match:
@@ -283,7 +300,7 @@ def fill_inputs(ds: Dataset, entries: list[Entry], engines: dict, override_rt: f
         say(f'\n■ L/F·A/R - 과거실적 DATA ({years_back}년 전 동기간){dow_note}')
 
     def lf_slot(e, text):
-        label = '기존(안)' if e.scenario == 'before' else '변경(안)'
+        label = side_label(e.scenario)
         slot(e).setdefault('lf_by', {}).setdefault(label, []).append((e.aircraft, text))
     for e in entries:
         if not e.route:
@@ -384,7 +401,7 @@ def show_confirmation(ds: Dataset, entries: list[Entry]):
         p = e.parsed
         lf = f'{p.lf:.1%}' if p.lf is not None else '-'
         ar = f'{p.ar:,.0f}' if p.ar is not None else '-'
-        label = '기존(안)' if e.scenario == 'before' else '변경(안)'
+        label = side_label(e.scenario)
         eprint(f"{e.no:>2} {label:<8} {p.flight_no or '-':<10} {e.route or '?' + p.route_raw:<16} {e.aircraft or '-':<7} {e.period.label:<22} {e.rt:>6,.0f} {lf:>7} {ar:>10}")
     eprint('\n■ CASK 데이터 확인')
     seen = set()
@@ -400,7 +417,7 @@ def write_preview(path, ds: Dataset, entries: list[Entry], basis_lines, problems
     rows = []
     for e in entries:
         p = e.parsed
-        rows.append(dict(no=e.no, side='기존(안)' if e.scenario == 'before' else '변경(안)', flight=p.flight_no or '', route=e.route or '', route_raw=p.route_raw or '', aircraft=e.aircraft or '', period=e.period.label, rt=e.rt, rt_src=e.rt_src, rt_failed=e.rt_failed, lf=p.lf, ar=p.ar))
+        rows.append(dict(no=e.no, side=side_label(e.scenario), flight=p.flight_no or '', route=e.route or '', route_raw=p.route_raw or '', aircraft=e.aircraft or '', period=e.period.label, rt=e.rt, rt_src=e.rt_src, rt_failed=e.rt_failed, lf=p.lf, ar=p.ar))
     cask, seen = ([], set())
     for e in entries:
         if not e.route or not e.aircraft or (e.route, e.aircraft) in seen:
@@ -412,7 +429,7 @@ def write_preview(path, ds: Dataset, entries: list[Entry], basis_lines, problems
 
 def build_scenarios(ds: Dataset, entries: list[Entry], engines: dict, by_aircraft: bool=False):
     out = []
-    pairs = [('before', '기종별 비용')] if by_aircraft else [('before', '기존(안)'), ('after', '변경(안)')]
+    pairs = [('before', '기종별 비용')] if by_aircraft else list(SIDES.items())
     for sec, name in pairs:
         sc = Scenario(name, no_total=by_aircraft)
         mine = [e for e in entries if e.scenario == sec and e.route and e.aircraft]
@@ -559,7 +576,7 @@ def _lf_source_base(es) -> str:
     dow_by = {}
     for e in es:
         if e.actual is not None and (not e.actual.is_plan):
-            lab = '기존(안)' if e.scenario == 'before' else '변경(안)'
+            lab = side_label(e.scenario)
             dow_by.setdefault(lab, set()).add('전 요일(해당 요일 실적 없음)' if e.actual.dow_fallback else e.actual.dows or '전 요일')
     dow_txt = ''
     flat = {v for vs in dow_by.values() for v in vs}
@@ -610,11 +627,10 @@ def period_range(period) -> str:
     return f'{y1 % 100}.{m1:02d}.{d1:02d}~{y2 % 100}.{m2:02d}.{d2:02d}'
 
 def monthly_basis_rows(es, periods: dict | None=None) -> list[dict]:
-    order = {'before': 0, 'after': 1}
     groups: dict = {}
     for e in es:
         groups.setdefault(e.item, []).append(e)
-    keys = sorted(groups, key=lambda k: (order.get(groups[k][0].scenario, 9), k))
+    keys = sorted(groups, key=lambda k: (side_order(groups[k][0].scenario), k))
     per_side = {}
     for k in keys:
         per_side.setdefault(groups[k][0].scenario, []).append(k)
@@ -622,7 +638,7 @@ def monthly_basis_rows(es, periods: dict | None=None) -> list[dict]:
     for k in keys:
         grp = groups[k]
         e0 = grp[0]
-        side = '기존(안)' if e0.scenario == 'before' else '변경(안)'
+        side = side_label(e0.scenario)
         if len(per_side[e0.scenario]) > 1:
             side = f'{side} {e0.aircraft} {e0.schedule}'.strip()
         if any((e.actual is not None and (e.actual.is_daily or e.actual.day_fallback or e.actual.is_pickup) for e in grp)):
@@ -694,7 +710,7 @@ def day_match_rows(entries) -> list[dict]:
         a = e.actual
         if not (e.route and a is not None and a.is_daily):
             continue
-        side = '기존' if e.scenario == 'before' else '변경'
+        side = side_label(e.scenario).replace('(안)', '')
         for m in a.matches:
             key = (e.route, m.target)
             if key in rows:
@@ -719,6 +735,14 @@ def scenario_tag(scenarios) -> str:
         return ''
     if len(live) == 1:
         return _fit('+'.join(routes(live[0])))
+    if len(live) > 2:
+        rs = [routes(sc) for sc in live]
+        if any((r != rs[0] for r in rs)):
+            return _fit(' vs '.join(('+'.join(r) for r in rs)))
+        if len(rs[0]) > 1:
+            return _fit('+'.join(rs[0]))
+        alts = '·'.join(('+'.join(acs(sc)) for sc in live[1:]))
+        return _fit(f"{rs[0][0]} {'+'.join(acs(live[0]))} vs {alts}")
     a, b = live
     ra, rb = (routes(a), routes(b))
     if ra != rb:
@@ -740,7 +764,7 @@ def scenario_labels(entries) -> dict:
     for e in entries:
         if e.route and e.aircraft:
             by_side.setdefault(e.scenario, []).append(e)
-    for sec, label in (('before', '기존(안)'), ('after', '변경(안)')):
+    for sec, label in SIDES.items():
         es = by_side.get(sec) or []
         if not es:
             continue
@@ -902,7 +926,12 @@ def main():
     by_ac = by_ac or args.by_aircraft
     in_text_period, text = pop_period(text)
     fx_list, fuel_list, text = pop_grid(text)
-    rows = parse(text)
+    alts = None if by_ac else split_alternatives(text)
+    set_alternatives(len(alts) if alts else 1)
+    rows = parse(alts[0] if alts else text)
+    alt_rows = [parse(t) for t in alts] if alts else None
+    if alt_rows and any((not r for r in alt_rows)):
+        sys.exit("변경(안) 중 인식 못 한 것이 있습니다. 'A vs B or C or D' 형식을 확인하세요.")
     if not rows:
         sys.exit('입력에서 편명/노선을 찾지 못했습니다. 형식을 확인하세요 (README 참고).')
     period_text = args.period or in_text_period
@@ -948,7 +977,22 @@ def main():
         eprint(f'   ! 배부(공통)비 단가는 W26 파일에 있는 {used[0]}~{used[-1]} {len(used)}개월 기준입니다.')
         eprint(f'     대상 {len(base_period.months)}개월 중 {len(main_eng.outside)}개월({main_eng.outside[0]}~{main_eng.outside[-1]})은 파일 범위 밖이라 같은 단가를 그대로 적용합니다.')
         eprint(f'     (환율·유가와 CASK 단가는 전 기간이 정상 반영됩니다)')
-    entries, problems = build_entries(ds, rows, base_period)
+    if alt_rows:
+        entries, problems = ([], [])
+        for k, rs in enumerate(alt_rows):
+            es, pr = build_entries(ds, rs, base_period)
+            problems += pr
+            for e in es:
+                if e.scenario == 'before':
+                    if k == 0:
+                        entries.append(e)
+                elif e.scenario == 'after':
+                    e.scenario = 'after' if k == 0 else f'after{k + 1}'
+                    entries.append(e)
+        entries.sort(key=lambda e: side_order(e.scenario))
+        eprint(f'\n■ 변경(안) {len(alt_rows)}개를 기존(안)과 각각 비교합니다 ' + ' / '.join((f'{side_label(k)}' for k in list(SIDES)[1:])))
+    else:
+        entries, problems = build_entries(ds, rows, base_period)
     sc_desc = scenario_labels(entries)
     if by_ac:
         entries, notes = expand_aircraft(ds, entries)

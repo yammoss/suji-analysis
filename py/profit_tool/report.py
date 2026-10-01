@@ -445,6 +445,10 @@ def write_excel(path: Path | str, title: str, scenarios: list[Scenario], assumpt
     _text(ws, row, 2, DISCLAIMER, F_NOTE)
     row += 1
     _set_summary_widths(ws)
+    if len(totalable) > 2:
+        for i in range(3, 3 + 2 * len(totalable) - 1):
+            cd = ws.column_dimensions[L(i)]
+            cd.width = max(cd.width or 0, 9.5)
     if match_rows:
         _write_match_sheet(wb, match_rows)
     wb.active = 0
@@ -526,7 +530,9 @@ def _summary_table(ws, row: int, live, total_rows, scenario_desc: dict | None=No
     if not live or not total_rows or len(live) != len(total_rows):
         return row
     two = len(live) == 2
-    heads = ['구분'] + [sc.name for sc in live] + (['차이'] if two else [])
+    many = len(live) > 2 and (not any((sc.no_total for sc in live)))
+    heads = ['구분'] + [sc.name for sc in live] + (['차이'] if two else []) + ([f"{sc.name.replace('(안)', '')}\n-기존" for sc in live[1:]] if many else [])
+    n_sc = len(live)
     _text(ws, row, 2, '■ 총수지 요약 (억원)', F_SECT)
     row += 1
     if scenario_desc:
@@ -535,28 +541,34 @@ def _summary_table(ws, row: int, live, total_rows, scenario_desc: dict | None=No
             if desc:
                 _text(ws, row, 2, f'     {sc.name} = {desc}')
                 row += 1
-    ws.row_dimensions[row].height = ROW_H
+    ws.row_dimensions[row].height = ROW_H * (2 if many else 1)
     for i, h in enumerate(heads, start=2):
         c = ws.cell(row, i, h)
-        c.font, c.fill, c.alignment, c.border = (F_HEAD_W, HEAD_FILL, CENTER, BOX)
+        c.font, c.fill, c.border = (F_HEAD_W, HEAD_FILL, BOX)
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     row += 1
     for label, col in SUM_TABLE_COLS:
         ws.row_dimensions[row].height = ROW_H
         vals = [label] + [f'={L(col)}{tr}' for tr in total_rows]
         if two:
             vals.append(f'={L(col)}{total_rows[1]}-{L(col)}{total_rows[0]}')
+        if many:
+            vals += [f'={L(col)}{tr}-{L(col)}{total_rows[0]}' for tr in total_rows[1:]]
         for i, v in enumerate(vals, start=2):
             c = ws.cell(row, i, v)
             c.font = F_SUM if i == 2 else F_BODY
             c.alignment, c.border = (CENTER, BOX)
             if i > 2:
-                c.number_format = PL_E if col in (C_PCM, C_POP) or (two and i == 5) else MONEY_E
+                diff_col = two and i == 5 or (many and i > 2 + n_sc)
+                c.number_format = PL_E if col in (C_PCM, C_POP) or diff_col else MONEY_E
         row += 1
     for label, col in (('한계이익률', C_CMR), ('영업이익률', C_OPR)):
         ws.row_dimensions[row].height = ROW_H
         vals = [label] + [f'={L(col)}{tr}' for tr in total_rows]
         if two:
             vals.append(f'={L(col)}{total_rows[1]}-{L(col)}{total_rows[0]}')
+        if many:
+            vals += [f'={L(col)}{tr}-{L(col)}{total_rows[0]}' for tr in total_rows[1:]]
         for i, v in enumerate(vals, start=2):
             c = ws.cell(row, i, v)
             c.font = F_SUM if i == 2 else F_BODY
@@ -565,7 +577,7 @@ def _summary_table(ws, row: int, live, total_rows, scenario_desc: dict | None=No
                 c.number_format = PCT
         row += 1
     ws.row_dimensions[row].height = ROW_H
-    for i, v in enumerate(['운항횟수(왕복)'] + [f'={L(C_RT)}{tr}' for tr in total_rows] + ([f'={L(C_RT)}{total_rows[1]}-{L(C_RT)}{total_rows[0]}'] if two else []), start=2):
+    for i, v in enumerate(['운항횟수(왕복)'] + [f'={L(C_RT)}{tr}' for tr in total_rows] + ([f'={L(C_RT)}{total_rows[1]}-{L(C_RT)}{total_rows[0]}'] if two else []) + ([f'={L(C_RT)}{tr}-{L(C_RT)}{total_rows[0]}' for tr in total_rows[1:]] if many else []), start=2):
         c = ws.cell(row, i, v)
         c.font = F_SUM if i == 2 else F_BODY
         c.alignment, c.border = (CENTER, BOX)
@@ -731,6 +743,40 @@ def _caveat_lines(proxies, missing, no_rev) -> list:
         out.append(f"        · {', '.join(sorted(set(missing)))}")
     return out
 
+def _multi_lines(live, scenario_desc) -> list:
+    base = live[0]
+    get = lambda sc, a: sc.total_partial(a)[0]
+    out = ['', f'○ {base.name} 대비 변경(안)별 수지 (총수지, 억원)']
+    if scenario_desc:
+        for sc in live:
+            d = scenario_desc.get(sc.name)
+            if d:
+                out.append(f'     {sc.name} = {d}')
+    out.append(f"     {'':<12}{'총수입':>10}{'총비용':>10}{'한계이익':>10}{'영업이익':>10}{'영업이익 차이':>14}")
+    for sc in live:
+        vals = [get(sc, a) for a in ('total_revenue', 'total_cost', 'contribution', 'operating_profit')]
+        d = vals[3] - get(base, 'operating_profit')
+        out.append(f'     {sc.name:<12}' + ''.join((f'{v / 100000000.0:>10,.1f}' for v in vals)) + (f'{d / 100000000.0:>+14,.1f}' if sc is not base else f"{'-':>14}"))
+    rank = sorted(live, key=lambda sc: -get(sc, 'operating_profit'))
+    best = rank[0]
+    desc = lambda sc: (scenario_desc or {}).get(sc.name) or sc.name
+    if best is base:
+        out.append(f"     → 영업이익 기준 {base.name}({desc(base)}) 유지가 가장 유리하며, 변경(안) 중에서는 {rank[1].name}({desc(rank[1])}) 이 차선 ({_eok(get(rank[1], 'operating_profit') - get(base, 'operating_profit'))}).")
+    else:
+        out.append(f"     → 영업이익 기준 {best.name}({desc(best)}) 이 가장 유리 (기존 대비 +{_eok(get(best, 'operating_profit') - get(base, 'operating_profit'))}).")
+    cm_rank = sorted(live, key=lambda sc: -get(sc, 'contribution'))
+    if cm_rank[0] is not best:
+        out.append(f'     ※ 한계이익 기준으로는 {cm_rank[0].name}({desc(cm_rank[0])}) 이 가장 큼 - 고정비(리스료·감가상각) 배부 차이로 결론이 엇갈림. 기재를 이미 보유·운영 중이라면 한계이익 기준 판단이 타당.')
+    routes = {r.leg.route for sc in live for r in sc.results}
+    if len(routes) == 1:
+        out.append('')
+        out.append('○ 1왕복 수지 (만원)')
+        for sc in live:
+            rt = sum((r.leg.round_trips for r in sc.results)) or 1
+            per = lambda a: get(sc, a) / rt
+            out.append(f"     {sc.name:<10} {desc(sc):<22} 총수입 {_man(per('total_revenue'))} / 한계이익 {_man(per('contribution'))} / 영업이익 {_man(per('operating_profit'))}  ({rt:,.0f}왕복)")
+    return out
+
 def build_narrative(scenarios: list[Scenario], assumptions: list[str], scenario_desc: dict | None=None) -> str:
     lines = ['○ 산출기준']
     lines += [f'     - {a}' if not a.startswith(' ') else a for a in assumptions]
@@ -832,6 +878,8 @@ def build_narrative(scenarios: list[Scenario], assumptions: list[str], scenario_
             lines.append('          - 1왕복 한계이익이 비슷해도 B/T 13.4h 노선 1편을 빼면 B/T 5.2h 노선 2편을')
             lines.append('            돌릴 수 있어 시간당으로는 2배 이상 벌어진다.')
             lines.append('          - 슬롯·정비·승무원 제약으로 그 가동시간을 실제로 옮길 수 있을 때만 성립.')
+    if len(live) > 2 and (not blind) and (not any((sc.no_total for sc in live))):
+        lines += _multi_lines(live, scenario_desc)
     if len(live) == 2 and (not blind):
         lines += _contribution_lines(scenarios[0], scenarios[1])
     rows = [r for sc in live for r in sc.results if r.d_fuel]

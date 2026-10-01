@@ -283,6 +283,7 @@ def parse_sections(text: str) -> list[ParsedRow] | None:
     return rows
 "\n    ICN-DAD B738 : DAILY vs 12/18까지 주4회, 이후 DAILY\n    ICN-DAD B738 DAILY vs 주4회\n    ICN-NRT : B738 vs A333                      (기종 비교)\n    ICN-NRT B738 DAILY vs A333 주4회             (기종+스케줄 동시 비교)\n\n  · ' vs ' (또는 '대', 'VS') 를 기준으로 기존(안) / 변경(안) 으로 나눈다.\n  · 노선은 양쪽 공통. 기종·스케줄은 각 쪽에서 따로 읽고, 한쪽에만 있으면 공유한다.\n"
 VS_RE = re.compile('\\s+(?:vs|VS|Vs|대)\\s+')
+ALT_RE = re.compile('\\s+(?:or|OR|Or|또는)\\s+|\\s+[/|]\\s+|\\s*,\\s+')
 AC_TOKEN = re.compile('(?<![A-Z0-9-])([A-Z]?\\d{2,3}[A-Z0-9-]{0,8}|\\d?MAX)(?![A-Z0-9])', re.I)
 LF_TOKEN = re.compile('(?:L\\s*/?\\s*F)\\s*[:=]?\\s*([\\d.]+)\\s*%?|(?<![\\d.])([\\d.]+)\\s*%', re.I)
 AR_TOKEN = re.compile('(?:A\\s*/?\\s*R)\\s*[:=]?\\s*([\\d,]+)', re.I)
@@ -631,3 +632,25 @@ def parse_compact(text: str) -> list[ParsedRow] | None:
         _apply_defaults(line_rows, g_ac, g_sched)
         rows.extend(line_rows)
     return rows or None
+
+def split_alternatives(text: str) -> list[str] | None:
+    lines = text.splitlines()
+    split, n = ({}, 0)
+    for i, line in enumerate(lines):
+        m = VS_RE.search(line)
+        if not m:
+            continue
+        right = line[m.end():]
+        parts = [x.strip() for x in ALT_RE.split(right) if x and x.strip()]
+        if len(parts) < 2 or not all((_has_aircraft(x) for x in parts)):
+            continue
+        if n and len(parts) != n:
+            return None
+        n = len(parts)
+        split[i] = (line[:m.end()], parts)
+    if not split:
+        return None
+    out = []
+    for k in range(n):
+        out.append('\n'.join((split[i][0] + split[i][1][k] if i in split else line for i, line in enumerate(lines))))
+    return out
