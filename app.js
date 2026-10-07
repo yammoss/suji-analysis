@@ -547,7 +547,8 @@ $("run-route").onclick = () => {
   const periods = ($("rt-period").value.trim() || "S26").split(",").map((x) => x.trim())
     .filter(Boolean).slice(0, 2);
   const argv = [...routes, "--period", ...periods,
-    "--fixed-alloc", document.querySelector("input[name=rtalloc]:checked").value];
+    "--fixed-alloc", document.querySelector("input[name=rtalloc]:checked").value,
+    "--basis", document.querySelector("input[name=rtbasis]:checked").value];
   runTool("노선수지.py", argv);        // 편수·기종은 실적 → 확정 스케줄 → 사업계획 순으로 자동
 };
 

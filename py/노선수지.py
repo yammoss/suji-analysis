@@ -20,7 +20,12 @@ EOK = 100000000
 def eprint(*a):
     print(*a, file=sys.stderr)
 
-def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, mg=None, cb=None, pl=None):
+def _last_year(act, route, mp):
+    a = act.for_period(route, mp, years_back=1, use_plan=False)
+    return a if a is not None and a.lf and a.ar else None
+
+def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, mg=None, cb=None, pl=None, basis='plan'):
+    past = basis == 'past'
     for lo, hi in month_spans(period):
         y, m = (lo.year, lo.month)
         mp = Period.parse(f'{y % 100}.{m:02d}')
@@ -95,8 +100,14 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             cargo_tot = (ext_row['cargo'] or 0) * k
             mixw = act.capacity(route, y, m)
             code = (next((c for c, d in ds.aircraft.items() if d['name'] == max(mixw, key=lambda x: mixw[x][0])), None) if mixw else None) or ac_hint or _main_ac(act, ds, route)
-            legs = [(code, rt, cargo_tot / max(rt, 1e-09))]
             src = ext_label + (f' · 구간 {k:.0%}' if k < 0.999 else '')
+            ly = _last_year(act, route, mp) if past and ext_kind == '추정' else None
+            if ly is not None:
+                pax, rev = (seats * ly.lf, seats * ly.lf * ly.ar)
+                cg = act.cargo_revenue(route, ds.aircraft[code]['name'], mp, years_back=1)
+                cargo_tot = cg.per_round_trip * rt
+                src = f'L/F·A/R {ly.source_label} · 편수 {ext_label}' + (f' · 구간 {k:.0%}' if k < 0.999 else '')
+            legs = [(code, rt, cargo_tot / max(rt, 1e-09))]
         else:
             cap_fc, cap_seats = act.capacity_span(route, lo, hi)
             ac_seg = None
@@ -135,9 +146,12 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
                 rt = seg / 2 * (days / max(whole, 1))
                 sched_note = 'W26 파일 사업량'
             plan_lf = plan_ar = None
-            if pl is not None and pl.available:
-                plan_lf, plan_ar = pl.rate(route, y, m)
-            a = act.for_period(route, mp, years_back=1, use_plan=True)
+            a = _last_year(act, route, mp) if past else None
+            ly_missing = past and a is None
+            if a is None:
+                if pl is not None and pl.available:
+                    plan_lf, plan_ar = pl.rate(route, y, m)
+                a = act.for_period(route, mp, years_back=1, use_plan=True)
             if a is None and (not (plan_lf and plan_ar)):
                 yield dict(y=y, m=m, empty=True, src='L/F·A/R 실적·계획 없음')
                 continue
@@ -164,6 +178,8 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             else:
                 lf_src = a.source_label
                 pax, rev = (seats * a.lf, seats * a.lf * a.ar)
+            if ly_missing:
+                lf_src = f'전년 실적 없음 → {lf_src}'
             legs = [(c2, r2, cargo.per_round_trip) for c2, r2 in mix_legs]
             cargo_tot = cargo.per_round_trip * rt
             src = f'{pl.short} 목표·사업량' if plan_lf and plan_ar and sched_note.startswith(pl.short) else lf_src + f' · {sched_note}'
@@ -391,7 +407,7 @@ def _combi_row(ws, row, vals, total: bool=False):
         elif i >= 2 and isinstance(v, (int, float)):
             c.number_format = '#,##0'
 
-def build_report(path, jobs, alloc, ds, sched, mg=None, wk=None):
+def build_report(path, jobs, alloc, ds, sched, mg=None, wk=None, basis='plan'):
     live = [d for _, blocks in jobs for _, rows in blocks for d in rows if not d['empty']]
     season_fallback = any((d.get('fallback') for d in live))
     pool_fix = any((d.get('pool_fix') and (not d.get('weekly')) for d in live))
@@ -404,7 +420,7 @@ def build_report(path, jobs, alloc, ds, sched, mg=None, wk=None):
     period = jobs[0][0]
     labels = ' · '.join((pp.label for pp, _ in jobs))
     ext = _month_ranges(live, '확정') or _month_ranges(live, '추정')
-    assumptions = [f'기간 : {labels}'] + _cost_lines(live, alloc, mg, wk) + ['수입 : 확정·추정 달은 그 파일의 운송·부대·화물수입, 나머지 달은 과거실적 DATA 의 실제 운송·화물수입 (부대수입은 대노선별 RASK 기준 추정)', '운항횟수 : 확정·추정 달은 그 파일 편수, 나머지 달은 과거실적 DATA 의 실제 편수' + ('(실적이 없으면 확정 스케줄' + (f' · {sched}' if sched else '') + ')'), "조건 : 비교 없이 노선 자체의 월별 수지 · 달마다 쓴 값의 출처는 노선 시트 '근거' 에 적혀 있습니다"]
+    assumptions = [f'기간 : {labels}'] + _cost_lines(live, alloc, mg, wk) + ['수입 : 실적 있는 달은 실제 운송·화물수입, 실적 없는 달은 **전년 동월 실적 L/F·A/R·화물** (과거실적 기준 · 확정실적 달은 그 파일 값) · 부대수입은 대노선별 RASK 기준 추정' if basis == 'past' else '수입 : 확정·추정 달은 그 파일의 운송·부대·화물수입, 나머지 달은 과거실적 DATA 의 실제 운송·화물수입, 실적 없는 달은 사업계획 목표 L/F·A/R (부대수입은 대노선별 RASK 기준 추정)', '운항횟수 : 확정·추정 달은 그 파일 편수, 나머지 달은 과거실적 DATA 의 실제 편수' + ('(실적이 없으면 확정 스케줄' + (f' · {sched}' if sched else '') + ')'), "조건 : 비교 없이 노선 자체의 월별 수지 · 달마다 쓴 값의 출처는 노선 시트 '근거' 에 적혀 있습니다"]
     rt_all = sum((d['rt'] for d in live))
     if rt_all:
         fx = sum(((d.get('fx') or 0) * d['rt'] for d in live)) / rt_all
@@ -426,8 +442,12 @@ def main():
     ap.add_argument('--ac', default=None, help='실적 없는 달에 쓸 기종 (기본: 그 노선 주력 기종)')
     ap.add_argument('--fixed-alloc', choices=('revenue', 'volume'), default='volume')
     ap.add_argument('--no-weekly', action='store_true', help='주차별 추정실적을 쓰지 않고 전 기간 CASK 로만 계산')
+    ap.add_argument('--basis', choices=('plan', 'past'), default='plan', help='실적 없는 달 L/F·A/R : plan = 추정실적·사업계획 (기본) / past = 전년 동월 실적')
+    ap.add_argument('--no-plan', action='store_true', help='--basis past 와 같음 (수지비교와 같은 옵션)')
     ap.add_argument('--out', default=None)
     args = ap.parse_args()
+    if args.no_plan:
+        args.basis = 'past'
     ds, act = (Dataset(), Actuals())
     wk = None if args.no_weekly else Weekly()
     mg = None if args.no_weekly else Mgmt()
@@ -453,7 +473,7 @@ def main():
             if not route:
                 eprint(f'   ! 노선 인식 실패 : {raw}')
                 continue
-            rows = list(month_rows(ds, act, route, period, args.sched, ac_hint, args.fixed_alloc, item=len(blocks), wk=wk, mg=mg, cb=cb, pl=pl))
+            rows = list(month_rows(ds, act, route, period, args.sched, ac_hint, args.fixed_alloc, item=len(blocks), wk=wk, mg=mg, cb=cb, pl=pl, basis=args.basis))
             blocks.append((route, rows))
             eprint(f'\n■ {route} ({period.label})')
             eprint(f"   {'년월':<8}{'편수':>6}{'L/F':>8}{'A/R':>9}{'총수입':>12}{'총비용':>12}{'영업이익':>12}{'이익률':>8}  근거")
@@ -475,9 +495,11 @@ def main():
         sys.exit('계산할 노선이 없습니다.')
     tag = '+'.join((r.replace(' V.V', '').replace('-', '') for r, _ in jobs[0][1]))[:50]
     span = '+'.join((pp.label for pp, _ in jobs))
+    if args.basis == 'past':
+        span += ' 과거실적기준'
     out = args.out or BASE / 'output' / f'노선수지_{datetime.now():%y%m%d} ({tag} {span}).xlsx'
     __import__('pathlib').Path(out).parent.mkdir(parents=True, exist_ok=True)
-    build_report(out, jobs, args.fixed_alloc, ds, args.sched, mg, wk)
+    build_report(out, jobs, args.fixed_alloc, ds, args.sched, mg, wk, basis=args.basis)
     eprint(f'\n[저장] {out}')
 if __name__ == '__main__':
     main()

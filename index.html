@@ -229,6 +229,12 @@
         <label class="opt"><input type="radio" name="rtalloc" value="volume" checked> 편수·B/T (권장)</label>
         <label class="opt"><input type="radio" name="rtalloc" value="revenue"> 운송수입</label>
       </div>
+      <div class="row">
+        <span class="muted">실적 없는 달 L/F·A/R</span>
+        <label class="opt"><input type="radio" name="rtbasis" value="plan" checked> 추정실적 · 사업계획 (기본)</label>
+        <label class="opt"><input type="radio" name="rtbasis" value="past"> 과거실적 (전년 동월)</label>
+        <span class="muted">실적 있는 달은 어느 쪽이든 실적 · 편수와 비용 기준은 같습니다</span>
+      </div>
       <button id="run-route" disabled>계산 · 엑셀 받기</button>
     </div>
 
