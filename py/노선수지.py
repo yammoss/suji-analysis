@@ -452,6 +452,8 @@ def main():
     wk = None if args.no_weekly else Weekly()
     mg = None if args.no_weekly else Mgmt()
     cb = None if args.no_weekly else CostBook()
+    if cb is not None and cb.available:
+        cb.fill_capacity(act)
     pl = Plan()
     labels = [x for raw in args.period for x in str(raw).split(',') if x.strip()]
     periods = []
