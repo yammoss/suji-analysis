@@ -8,7 +8,7 @@ from pathlib import Path
 import openpyxl
 from .paths import DATA_DIR, PASSWORD, TOOL
 CACHE = TOOL / 'data' / 'mgmt_cache.pkl'
-FILE_PAT = re.compile('경영기획.*노선별\\s*실적')
+FILE_PAT = re.compile('경영기획.*노선별\\s*실적|노선별\\s*실적.*REV\\s*\\d+', re.I)
 SHEET = 'AD-HOC(전체 실적)'
 COL = dict(line=1, kind=2, area=3, route=4, ac=5, month=6, fc=7, seats=8, pax=9, lf=10, ar=11, rev=12, pax_rev=13, anc=14, cargo=15, cost=16, var=17, fix=20, rt_rev=23, rt_cost=24, rt_var=25, rt_fix=27)
 HEAD_KEY = {'route': '왕복노선', 'ac': '기종', 'month': '월', 'fc': '운항편수', 'seats': '공급석', 'pax': '수송석', 'lf': 'lf', 'ar': 'ar', 'rev': '총수입', 'pax_rev': '운송수입', 'anc': '부대수입', 'cargo': '화물수입', 'cost': '총비용', 'var': '변동비', 'fix': '고정비', 'area': '대노선', 'kind': '정기', 'line': '국내/국제'}
@@ -17,7 +17,12 @@ def find_file() -> Path | None:
     if DATA_DIR is None:
         return None
     cands = [p for p in DATA_DIR.glob('*.xls*') if FILE_PAT.search(p.name) and (not p.name.startswith('~$'))]
-    return max(cands, key=lambda p: p.stat().st_mtime) if cands else None
+
+    def rank(p):
+        ms = re.findall('(\\d{1,2})\\s*월', p.name)
+        rev = re.search('REV\\s*(\\d+)', p.name, re.I)
+        return (int(ms[-1]) if ms else 0, int(rev.group(1)) if rev else 0, p.stat().st_mtime)
+    return max(cands, key=rank) if cands else None
 
 def _open(path: Path):
     try:
@@ -73,7 +78,9 @@ def _parse(path: Path) -> dict:
     col = _headers(rows)
     year = _year(path.name)
     by_ac, carry = ({}, {})
+    collapsed: dict[tuple[str, str], float] = {}
     for r in rows:
+        own_ac = r[col['ac']] if col.get('ac') is not None and col['ac'] < len(r) else None
         for k in ('line', 'kind', 'area', 'route', 'ac'):
             i = col[k]
             if i is None or i >= len(r):
@@ -85,6 +92,9 @@ def _parse(path: Path) -> dict:
         get = lambda k: r[col[k]] if col.get(k) is not None and col[k] < len(r) else None
         month, route, ac = (get('month'), get('route'), get('ac'))
         if not isinstance(month, (int, float)):
+            fc = get('fc')
+            if own_ac not in (None, '') and route and isinstance(fc, (int, float)) and (fc > 0):
+                collapsed[str(route).strip(), str(own_ac).strip()] = float(fc)
             continue
         if not route or not isinstance(get('fc'), (int, float)):
             continue
@@ -94,7 +104,7 @@ def _parse(path: Path) -> dict:
             continue
         key = (str(route).strip(), str(ac or '').strip(), year, int(month))
         by_ac[key] = {k: float(get(k)) if isinstance(get(k), (int, float)) else None for k in ('fc', 'seats', 'pax', 'lf', 'ar', 'rev', 'pax_rev', 'anc', 'cargo', 'cost', 'var', 'fix', 'rt_cost', 'rt_var', 'rt_fix')}
-    return by_ac
+    return {'rows': by_ac, 'collapsed': collapsed}
 
 class Mgmt:
 
@@ -108,7 +118,7 @@ class Mgmt:
         if self.path is None or not self.path.exists():
             return
         st = self.path.stat()
-        sig = f'{self.path.name}:{st.st_size}:{int(st.st_mtime)}'
+        sig = f'v2|{self.path.name}:{st.st_size}:{int(st.st_mtime)}'
         data = None
         try:
             cached = pickle.loads(CACHE.read_bytes())
@@ -124,6 +134,8 @@ class Mgmt:
                 CACHE.write_bytes(pickle.dumps({'sig': sig, 'data': data}))
             except OSError:
                 pass
+        self.collapsed = dict(data.get('collapsed') or {}) if 'rows' in data else {}
+        data = data['rows'] if 'rows' in data else data
         self._ac = data
         for (route, ac, y, m), v in data.items():
             e = self._route.setdefault((route, y, m), {k: 0.0 for k in ('fc', 'seats', 'pax', 'rev', 'pax_rev', 'anc', 'cargo', 'cost', 'var', 'fix')})
@@ -141,6 +153,13 @@ class Mgmt:
 
     def covers(self, y: int, m: int) -> bool:
         return (y, m) in self.months
+
+    def partial(self, route: str, flown: dict, tol: float=0.05) -> list[str]:
+        miss = [ac for (r, ac), fc in self.collapsed.items() if r == route and fc and flown.get(ac)]
+        total = sum((v for v in flown.values() if v))
+        if not miss or not total:
+            return []
+        return miss if sum((flown[a] for a in miss)) / total > tol else []
 
     @property
     def short(self) -> str:

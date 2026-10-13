@@ -42,6 +42,7 @@ class CostBook:
         self._by: dict[tuple[str, int, int], dict] = {}
         self._plan: dict[tuple[str, int, int], dict] = {}
         self._label: dict[tuple[int, int], tuple[str, str]] = {}
+        self._rlabel: dict[tuple[str, int, int], tuple[str, str]] = {}
         self._days: dict[str, dict[date, dict[str, list]]] = {}
         if self.path is None or not self.path.exists():
             return
@@ -68,7 +69,9 @@ class CostBook:
                 if i < len(r) and isinstance(r[i], (int, float)):
                     cur[k] += float(r[i])
             if store is self._by:
-                self._label[y, m] = (str(kind or ''), str(label or ''))
+                self._rlabel[route, y, m] = (str(kind or ''), str(label or ''))
+                if str(kind or '') == '확정' or (y, m) not in self._label:
+                    self._label[y, m] = (str(kind or ''), str(label or ''))
         self.months = sorted(self._label)
         self.available = bool(self._by)
 
@@ -93,10 +96,14 @@ class CostBook:
     def plan(self, route: str, y: int, m: int) -> dict | None:
         return self._plan.get((route, y, m))
 
-    def kind(self, y: int, m: int) -> str:
+    def kind(self, y: int, m: int, route: str | None=None) -> str:
+        if route is not None and (route, y, m) in self._rlabel:
+            return self._rlabel[route, y, m][0]
         return self._label.get((y, m), ('', ''))[0]
 
-    def label_of(self, y: int, m: int) -> str:
+    def label_of(self, y: int, m: int, route: str | None=None) -> str:
+        if route is not None and (route, y, m) in self._rlabel:
+            return self._rlabel[route, y, m][1]
         return self._label.get((y, m), ('', ''))[1]
 
     def covers(self, y: int, m: int) -> bool:

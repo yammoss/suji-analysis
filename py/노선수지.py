@@ -34,9 +34,15 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
         agg = act._agg.get((route, y, m))
         mix = {a: v for (r, a, yy, mm), v in act._cargo.items() if r == route and yy == y and (mm == m) and v[1]}
         ext_row = ext_kind = ext_label = None
+        mg_note = ''
         if mg is not None and mg.available:
             ext_row = mg.get(route, y, m)
-            if ext_row and ext_row.get('fc'):
+            flown = {a: v[0] for a, v in act.capacity(route, y, m).items()} or {a: v[1] for a, v in mix.items()}
+            miss = mg.partial(route, flown) if ext_row else []
+            if miss:
+                ext_row = None
+                mg_note = f"확정 파일에 {'·'.join(miss)} 월별 행 없음 → "
+            elif ext_row and ext_row.get('fc'):
                 ext_row = dict(ext_row, rt=ext_row['fc'] / 2)
                 ext_kind, ext_label = ('확정', f'확정실적({mg.short})')
             else:
@@ -45,12 +51,12 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             got = wk.get(route, y, m)
             if got and got.get('rt'):
                 ext_row, ext_kind = (got, '추정')
-                ext_label = f'추정실적({wk.label_of(y, m)})'
+                ext_label = mg_note + f'추정실적({wk.label_of(y, m)})'
         if ext_row is None and cb is not None and cb.available:
             got = cb.get(route, y, m)
             if got and got.get('rt'):
-                ext_row, ext_kind = (got, cb.kind(y, m) or '추정')
-                ext_label = f'{ext_kind}실적({cb.label_of(y, m)})'
+                ext_row, ext_kind = (got, cb.kind(y, m, route) or '추정')
+                ext_label = f'{ext_kind}실적({cb.label_of(y, m, route)})'
         part = _daily_span(act, route, lo, hi)
         full_month = lo.day == 1 and (hi + timedelta(days=1)).month != m
         last_flown = act.day_range[1] if act.day_range else None
@@ -206,7 +212,7 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             var += (res.variable_cost or 0) * rt_i
             anc += (res.ancillary_revenue or 0) * rt_i
         names = ' + '.join((f"{ds.aircraft[c]['name']}" for c, _, _ in legs))
-        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, var=var, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), cost_src=ext_kind or 'CASK', fx=fx, fuel=fuel, idx_src=idx_src, src=src if wk_scaled else src + ' · 비용 CASK(W26 파일' + (f', {pool_note.split()[-2]}' if pool_note else '') + f', {y % 100}.{m:02d} INDEX)')
+        yield dict(y=y, m=m, empty=False, ac=names, ow=round(sum((r_ * 2 for _, r_, _ in legs))), results=results, legs=legs, seats=seats, pax=pax, lf=lf, ar=ar, rev=rev, anc=anc, cargo=cargo_tot, total_rev=rev + anc + cargo_tot, cost=cost, var=var, rt=sum((r_ for _, r_, _ in legs)), fallback=getattr(eng, 'season_fallback', False), pool_fix=bool(pool_note), weekly=bool(wk_scaled), cost_src=ext_kind or 'CASK', fx=fx, fuel=fuel, idx_src=idx_src, src=src if wk_scaled else src + ' · 비용 ' + mg_note + 'CASK(W26 파일' + (f', {pool_note.split()[-2]}' if pool_note else '') + f', {y % 100}.{m:02d} INDEX)')
 
 def _apply_weekly(res, per_rt):
     for tgt_key, cur_attr, put_attr, const_attr in (('var', 'variable_cost', 'indirect_var', 'var_const'), ('fix', 'fixed_cost', 'indirect_fix', 'fix_const')):
