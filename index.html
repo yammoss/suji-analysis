@@ -139,6 +139,7 @@
       <button data-tab="route" class="on">노선 수지</button>
       <button data-tab="compare">수지비교</button>
       <button data-tab="cost">비용</button>
+      <button data-tab="erp">ERP 실적</button>
     </div>
 
     <div class="pane" id="pane-compare" hidden>
@@ -225,6 +226,11 @@
         <span class="muted">시즌(S26·W26) · 연도(26년) · 구간(26년1월~27년3월) · 2개까지 쉼표로</span>
       </div>
       <div class="row">
+        <label>기종 <input type="text" id="rt-ac" size="8" list="ac-list" placeholder="(선택)"></label>
+        <span class="muted">실적 없는 달에만 씁니다. 운항 이력이 없는 신규 노선은 DAILY · 이 기종(비우면 B738)으로 비용을 깔고,
+          엑셀 파란 칸(운항횟수·L/F·A/R)에 값을 넣으면 수입·손익이 계산됩니다.</span>
+      </div>
+      <div class="row">
         <span class="muted">간접고정비</span>
         <label class="opt"><input type="radio" name="rtalloc" value="volume" checked> 편수·B/T (권장)</label>
         <label class="opt"><input type="radio" name="rtalloc" value="revenue"> 운송수입</label>
@@ -236,6 +242,16 @@
         <span class="muted">실적 있는 달은 어느 쪽이든 실적 · 편수와 비용 기준은 같습니다</span>
       </div>
       <button id="run-route" disabled>계산 · 엑셀 받기</button>
+    </div>
+
+    <div class="pane" id="pane-erp" hidden>
+      <p class="muted">노선의 <b>24년 1월 ~ 최근 월별 실적</b>을 뽑습니다 (손익 = ERP, 운송 = BI 방향별). PPT 자동화의 '노선월별추출' 과 같은 엑셀입니다.<br>
+        공유폴더의 <b>ERP 실적 DATA.xlsx</b> 를 씁니다 (PPT 자동화 RAW 가 바뀌면 매주 자동 갱신). 노선은 공항 두 개로 맞춥니다 (방향·V.V·부정기 합산).</p>
+      <div class="row">
+        <label>노선 <input type="text" id="erp-routes" size="40" placeholder="ICN-NRT 또는 ICN-NRT, ICN-KIX, PUS-FUK"></label>
+        <span class="muted">여러 개는 쉼표로 · 노선마다 시트 하나</span>
+      </div>
+      <button id="run-erp" disabled>엑셀 받기</button>
     </div>
 
     <div class="pane" id="pane-cost" hidden>

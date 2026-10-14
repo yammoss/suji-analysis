@@ -40,7 +40,7 @@ function setStatus(text, busy = false) {
   $("statusline").classList.toggle("busy", busy);
 }
 function setRunnable(on) {
-  for (const b of ["run-compare", "preview-compare", "run-cost", "run-route"]) $(b).disabled = !on;
+  for (const b of ["run-compare", "preview-compare", "run-cost", "run-route", "run-erp"]) $(b).disabled = !on;
 }
 
 // ── 폴더 기억 (IndexedDB) ────────────────────────────────────────────
@@ -103,6 +103,7 @@ function renderFiles(files) {
     [has("과거실적 DATA.xlsx"), "과거실적 DATA.xlsx"],
     [has("공휴일 DATA.xlsx"), "공휴일 DATA.xlsx (일자 매칭용, 없어도 됨)"],
     [has("비용기준 DATA.xlsx"), "비용기준 DATA.xlsx (확정·추정 비용, 없어도 됨)"],
+    [has("ERP 실적 DATA.xlsx"), "ERP 실적 DATA.xlsx (ERP 실적 탭용, 없어도 됨)"],
   ];
   $("files").innerHTML = items.map(([ok, t]) => `<li class="${ok ? "ok" : "miss"}">${t}</li>`).join("");
   const plan = info && info.plan_tabs && info.plan_tabs.length;
@@ -549,7 +550,16 @@ $("run-route").onclick = () => {
   const argv = [...routes, "--period", ...periods,
     "--fixed-alloc", document.querySelector("input[name=rtalloc]:checked").value,
     "--basis", document.querySelector("input[name=rtbasis]:checked").value];
+  const rtAc = $("rt-ac").value.trim().toUpperCase();
+  if (rtAc) argv.push("--ac", rtAc);
   runTool("노선수지.py", argv);        // 편수·기종은 실적 → 확정 스케줄 → 사업계획 순으로 자동
+};
+
+// ── ERP 실적 탭 ───────────────────────────────────────────────────────
+$("run-erp").onclick = () => {
+  const routes = $("erp-routes").value.split(/[,\s/]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+  if (!routes.length) return setStatus("노선을 입력하세요");
+  runTool("ERP실적.py", [routes.join(",")]);
 };
 
 // ── 비용 탭 ───────────────────────────────────────────────────────────

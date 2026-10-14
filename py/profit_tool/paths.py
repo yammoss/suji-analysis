@@ -2,7 +2,7 @@
 from pathlib import Path
 TOOL = Path(__file__).resolve().parent.parent
 CONFIG = TOOL / '데이터 폴더.txt'
-KEYS = {'raw': 'RAW', 'weekly': '추정실적', 'password': '비번'}
+KEYS = {'raw': 'RAW', 'weekly': '추정실적', 'password': '비번', 'ppt': 'PPT자동화'}
 
 def _lines() -> list[str]:
     try:
@@ -40,3 +40,4 @@ WARNING = '' if _d or not _base else f'{_w} - 도구 폴더의 데이터를 씁�
 RAW_DIR, RAW_WARNING = _dir(_extra.get('raw', ''), 'RAW')
 WEEKLY_DIR, WEEKLY_WARNING = _dir(_extra.get('weekly', ''), '추정실적')
 PASSWORD = _extra.get('password', '')
+PPT_DIR, PPT_WARNING = _dir(_extra.get('ppt', '') or str(TOOL.parent / 'ppt자동화'), 'PPT자동화')
