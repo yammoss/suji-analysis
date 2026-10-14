@@ -86,7 +86,15 @@ class Weekly:
                 rt = _num(row[cols['rt']])
                 if not route or not rt:
                     continue
-                self._by[route.strip(), *ym] = {k: _num(row[cols[k]]) for k in ('rt', 'seats', 'pax', 'lf', 'ar', 'rev', 'pax_rev', 'cargo', 'anc', 'var', 'fix', 'cost')}
+                chtr = 'CHTR' in route.upper()
+                key = re.sub('\\s+', ' ', re.sub('\\(\\s*CHTR\\s*\\)', ' ', route, flags=re.I)).strip()
+                vals = {k: _num(row[cols[k]]) for k in ('rt', 'seats', 'pax', 'rev', 'pax_rev', 'cargo', 'anc', 'var', 'fix', 'cost')}
+                e = self._by.setdefault((key, *ym), dict.fromkeys(vals, 0.0) | {'n_reg': 0.0, 'n_chtr': 0.0})
+                for k, v in vals.items():
+                    e[k] += v or 0.0
+                e['n_chtr' if chtr else 'n_reg'] += vals['rt'] or 0.0
+                e['lf'] = e['pax'] / e['seats'] if e['seats'] else 0.0
+                e['ar'] = e['pax_rev'] / e['pax'] if e['pax'] else 0.0
 
     def get(self, route: str, y: int, m: int) -> dict | None:
         return self._by.get((route, y, m))

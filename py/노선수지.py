@@ -65,7 +65,7 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
         part = _daily_span(act, route, lo, hi)
         full_month = lo.day == 1 and (hi + timedelta(days=1)).month != m
         last_flown = act.day_range[1] if act.day_range else None
-        running = bool(full_month and part and last_flown and ((y, m) == (last_flown.year, last_flown.month)) and (part[5] < hi))
+        running = bool(part and last_flown and ((y, m) == (last_flown.year, last_flown.month)) and (part[5] < hi) and (last_flown < hi))
         if running and ext_row and ext_row.get('rt'):
             part, mix = (None, {})
         if mix and (part or (agg and agg[0] > 0 and full_month)):
@@ -100,6 +100,8 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
             month_fc, _ = act.capacity_span(route, lo.replace(day=1), (lo.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
             if span_fc and month_fc:
                 k = span_fc / month_fc
+                if k < 0.999:
+                    k = span_fc / 2 / ext_row['rt']
             else:
                 days = (hi - lo).days + 1
                 whole = ((lo.replace(day=28) + timedelta(days=4)).replace(day=1) - lo.replace(day=1)).days
@@ -118,7 +120,14 @@ def month_rows(ds, act, route, period, sched, ac_hint, alloc, item=0, wk=None, m
                 cg = act.cargo_revenue(route, ds.aircraft[code]['name'], mp, years_back=1)
                 cargo_tot = cg.per_round_trip * rt
                 src = f'L/F·A/R {ly.source_label} · 편수 {ext_label}' + (f' · 구간 {k:.0%}' if k < 0.999 else '')
-            legs = [(code, rt, cargo_tot / max(rt, 1e-09))]
+            span_ac = {} if ac_hint else act.capacity_span_ac(route, lo, hi) or {}
+            split = [(next((c for c, dd in ds.aircraft.items() if dd['name'] == nm), None), fc) for nm, fc in span_ac.items()]
+            split = [(c, fc) for c, fc in split if c]
+            if len(split) > 1:
+                tot_fc = sum((fc for _, fc in split))
+                legs = [(c, rt * fc / tot_fc, cargo_tot / max(rt, 1e-09)) for c, fc in split]
+            else:
+                legs = [(code, rt, cargo_tot / max(rt, 1e-09))]
         else:
             cap_fc, cap_seats = act.capacity_span(route, lo, hi)
             ac_seg = None

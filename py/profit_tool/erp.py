@@ -73,7 +73,10 @@ def _add_weekly(erp: dict) -> dict:
         fc = v['rt'] * 2
         total = v.get('rev') or (v.get('pax_rev') or 0) + (v.get('anc') or 0) + (v.get('cargo') or 0)
         e = erp.setdefault((ym, k), {'sched': set(), 'lf_w': 0.0})
-        e.setdefault('sched', set()).add('부정기노선' if 'CHTR' in str(route).upper() else '정기노선')
+        if v.get('n_reg') or not v.get('n_chtr'):
+            e.setdefault('sched', set()).add('정기노선')
+        if v.get('n_chtr'):
+            e.setdefault('sched', set()).add('부정기노선')
         for kk, val in (('flights', fc), ('rev', v.get('pax_rev')), ('cargo', v.get('cargo')), ('misc', v.get('anc')), ('total_rev', total), ('var', v.get('var')), ('fixed', v.get('fix')), ('cost', v.get('cost')), ('margin', total - (v.get('var') or 0)), ('op', total - (v.get('cost') or 0))):
             e[kk] = e.get(kk, 0.0) + (val or 0.0)
         if v.get('seats'):
