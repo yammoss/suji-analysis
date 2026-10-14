@@ -21,9 +21,11 @@ def route_key(name):
     if len(parts) == 1 and re.fullmatch('[A-Z]{6}', parts[0]):
         parts = [parts[0][:3], parts[0][3:]]
     return frozenset(parts[:2]) if len(parts) >= 2 else None
+KR_ORDER = ['ICN', 'GMP', 'PUS', 'TAE', 'CJJ', 'KWJ', 'MWX', 'RSU', 'USN', 'YNY', 'KUV', 'WJU', 'HIN', 'KPO', 'YEC', 'CJU']
 
 def route_name(k) -> str:
-    ab = sorted(k, key=lambda x: (x not in KR_AIRPORTS, x))
+    rank = lambda x: (0, KR_ORDER.index(x)) if x in KR_ORDER else (1, x)
+    ab = sorted(k, key=rank)
     return f'{ab[0]}-{ab[-1]}'
 
 def path() -> Path | None:
