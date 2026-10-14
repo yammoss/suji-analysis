@@ -36,6 +36,11 @@ def _sources() -> list[Path]:
     if PPT_DIR is None:
         return []
     out = [PPT_DIR / 'RAW DATA' / 'RAW.xlsx']
+    try:
+        from .weekly import find_files
+        out += [Path(f) for f in find_files()]
+    except Exception:
+        pass
     leg = PPT_DIR.parent / '6수요' / 'raw'
     out += [Path(p) for p in leg.glob('*년 실적*.xlsx') if not p.name.startswith('~$')] if leg.is_dir() else []
     return [p for p in out if p.exists()]
@@ -45,6 +50,36 @@ def stale(target: Path) -> bool:
     if not src:
         return False
     return not target.exists() or target.stat().st_mtime < max((p.stat().st_mtime for p in src))
+
+def _week_label(text: str) -> str:
+    m = re.search('(\\d{1,2})\\s*월\\s*(\\d)\\s*주차', str(text or '').split('_')[-1])
+    return f'{int(m.group(1))}월 {m.group(2)}주차 추정' if m else '추정'
+
+def _add_weekly(erp: dict) -> dict:
+    try:
+        from .weekly import Weekly
+        wk = Weekly()
+    except Exception:
+        return {}
+    if not wk.available:
+        return {}
+    last = max((ym for ym, _ in erp), default=0)
+    labels = {}
+    for (route, y, m), v in wk._by.items():
+        ym = y * 100 + m
+        k = route_key(route)
+        if ym <= last or not k or (not v.get('rt')):
+            continue
+        fc = v['rt'] * 2
+        total = v.get('rev') or (v.get('pax_rev') or 0) + (v.get('anc') or 0) + (v.get('cargo') or 0)
+        e = erp.setdefault((ym, k), {'sched': set(), 'lf_w': 0.0})
+        e.setdefault('sched', set()).add('부정기노선' if 'CHTR' in str(route).upper() else '정기노선')
+        for kk, val in (('flights', fc), ('rev', v.get('pax_rev')), ('cargo', v.get('cargo')), ('misc', v.get('anc')), ('total_rev', total), ('var', v.get('var')), ('fixed', v.get('fix')), ('cost', v.get('cost')), ('margin', total - (v.get('var') or 0)), ('op', total - (v.get('cost') or 0))):
+            e[kk] = e.get(kk, 0.0) + (val or 0.0)
+        if v.get('seats'):
+            e['lf_w'] += (v.get('pax') or 0) / v['seats'] * fc
+        labels[ym] = _week_label(wk.label_of(y, m))
+    return labels
 
 def build(target_dir: Path) -> str:
     if PPT_DIR is None or not (PPT_DIR / 'src' / 'route_history.py').exists():
@@ -58,11 +93,12 @@ def build(target_dir: Path) -> str:
         return f'ERP 실적 DATA : 원본을 읽지 못했습니다 ({e}) - 기존 파일을 그대로 둡니다'
     finally:
         sys.path.remove(str(PPT_DIR / 'src'))
+    weekly = _add_weekly(erp)
     wb = Workbook(write_only=True)
     ws = wb.create_sheet('ERP')
     ws.append(['노선', '년월', '기준', '정기/부정기'] + ERP_KEYS)
     for (ym, k), v in sorted(erp.items(), key=lambda x: (route_name(x[0][1]), x[0][0])):
-        ws.append([route_name(k), datetime(ym // 100, ym % 100, 1), '추정' if ym in est else 'ERP', '·'.join(sorted((x for x in v.get('sched', set()) if x)))] + [round(float(v.get(kk) or 0), 6 if kk == 'lf_w' else 1) for kk in ERP_KEYS])
+        ws.append([route_name(k), datetime(ym // 100, ym % 100, 1), weekly.get(ym) or ('추정' if ym in est else 'ERP'), '·'.join(sorted((x for x in v.get('sched', set()) if x)))] + [round(float(v.get(kk) or 0), 6 if kk == 'lf_w' else 1) for kk in ERP_KEYS])
     wb2 = wb.create_sheet('BI')
     wb2.append(['노선', '년월'] + BI_KEYS)
     for (ym, k), v in sorted(leg.items(), key=lambda x: (route_name(x[0][1]), x[0][0])):
@@ -81,14 +117,15 @@ def build(target_dir: Path) -> str:
     except OSError as e:
         return f'ERP 실적 DATA : 공유폴더에 쓰지 못했습니다 ({e})'
     yms = sorted({ym for ym, _ in erp})
-    return f'ERP 실적 DATA : ERP {len(erp):,}행 ({yms[0] // 100 % 100}.{yms[0] % 100}~{yms[-1] // 100 % 100}.{yms[-1] % 100}, 추정 {len(est)}개월) · BI {len(leg):,}행 → {dst.name}'
+    wk_txt = ' · 주차 추정 ' + ', '.join((f'{ym // 100 % 100}.{ym % 100:02d}({lab})' for ym, lab in sorted(weekly.items()))) if weekly else ''
+    return f'ERP 실적 DATA : ERP {len(erp):,}행 ({yms[0] // 100 % 100}.{yms[0] % 100}~{yms[-1] // 100 % 100}.{yms[-1] % 100}, 추정 {len(est)}개월{wk_txt}) · BI {len(leg):,}행 → {dst.name}'
 
 def load(p: Path | None=None):
     p = p or path()
     if p is None:
         return None
     wb = load_workbook(p, read_only=True, data_only=True)
-    erp, est, leg = ({}, set(), {})
+    erp, est, leg = ({}, {}, {})
     for r in wb['ERP'].iter_rows(min_row=2, values_only=True):
         if not r or not r[0] or (not hasattr(r[1], 'year')):
             continue
@@ -97,8 +134,8 @@ def load(p: Path | None=None):
         e = {kk: float(r[4 + i] or 0) for i, kk in enumerate(ERP_KEYS) if 4 + i < len(r)}
         e['sched'] = set((x for x in str(r[3] or '').split('·') if x))
         erp[ym, k] = e
-        if str(r[2] or '') == '추정':
-            est.add(ym)
+        if r[2] and str(r[2]) != 'ERP':
+            est[ym] = str(r[2])
     for r in wb['BI'].iter_rows(min_row=2, values_only=True):
         if not r or not r[0] or (not hasattr(r[1], 'year')):
             continue
@@ -137,7 +174,7 @@ def write_route(wb, code, erp, est, leg, leg_name):
     ws = wb.create_sheet(name[:31])
     ws.sheet_view.showGridLines = False
     ws.cell(1, 1, '%s 월별 실적 (%d.%d ~ %d.%d)' % (name, yms[0] // 100 % 100, yms[0] % 100, yms[-1] // 100 % 100, yms[-1] % 100)).font = Font(bold=True, size=13, color='666058')
-    ws.cell(2, 1, "※ 손익 = ERP (24·25년 'YYYY ERP DATA', 26년 '실제 DATA', 추정 = 추정실적 파일) · 운송 = BI 방향별 실적 (%s) · 금액 백만원 · 24·25년 영업이익은 그해 비용 배부 기준" % (leg_name or '-')).font = Font(size=9, color='8C8C8C')
+    ws.cell(2, 1, "※ 손익 = ERP (24·25년 'YYYY ERP DATA', 26년 '실제 DATA', 추정 = 추정실적 파일 · 'm월 n주차 추정' = 주차별 추정실적 보고) · 운송 = BI 방향별 실적 (%s) · 금액 백만원 · 24·25년 영업이익은 그해 비용 배부 기준" % (leg_name or '-')).font = Font(size=9, color='8C8C8C')
     r0 = 4
     groups = {}
     for j, (h, g, _fn, _fmt) in enumerate(COLS, 1):
@@ -179,7 +216,7 @@ def write_route(wb, code, erp, est, leg, leg_name):
             ps.append(p)
             ls.append(l)
             sched = '·'.join(sorted((x.replace('노선', '') for x in p.get('sched', set()) if x))) if p else ''
-            basis = ('추정' if ym in est else 'ERP') if p else '-'
+            basis = (est.get(ym) if isinstance(est, dict) else '추정' if ym in est else None) or 'ERP' if p else '-'
             put('%d.%02d' % (y % 100, ym % 100), basis, sched, p, l)
         put('%d년 계' % y, '', '', _sum(ps), _sum(ls), fill=SUB, bold=True)
     widths = [9, 6, 10] + [10] * (len(COLS) - 3)
